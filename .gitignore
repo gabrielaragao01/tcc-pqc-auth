@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+
+# Virtual environment
+venv/
+env/
+.venv/
+.env/
+
+# Environment variables (segredos — nunca versionar)
+.env
+.env.*
+!.env.example
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Testes e cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Docker
+*.log
+
+# SQLite (gerado em runtime)
+*.db
+*.sqlite3
