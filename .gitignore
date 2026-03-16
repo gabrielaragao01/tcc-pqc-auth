@@ -44,3 +44,6 @@ coverage.xml
 # SQLite (gerado em runtime)
 *.db
 *.sqlite3
+
+# Claude Code
+.claude/
