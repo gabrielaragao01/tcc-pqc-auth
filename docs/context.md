@@ -243,3 +243,248 @@ Smoke test:     GET /pqc/health → 200 OK ✅
 - Considerar migrar `PQC_ALGORITHM` de `Kyber512` para `ML-KEM-512` para consistência com nomenclatura FIPS
 
 ---
+
+## Semana 3 (2026-03-17)
+
+### Fase 2 — Autenticação Clássica (RSA-2048 + JWT RS256) + SQLite
+
+#### O que foi implementado
+
+A Fase 2 entrega o **baseline clássico** que serve de referência para os benchmarks do TCC. O objetivo é ter um sistema de autenticação JWT completo usando algoritmos clássicos (RSA-2048, SHA-256), com medição de desempenho integrada nos endpoints, antes de implementar a versão PQC equivalente.
+
+**Estrutura criada:**
+
+```
+src/
+  crypto/
+    __init__.py              ← criado (estava faltando)
+    classical/
+      __init__.py
+      rsa.py                 ← RSASignature(IDigitalSignature) via cryptography lib
+  db/
+    __init__.py
+    database.py              ← init_db(), get_connection() context manager (sqlite3)
+    models.py                ← User Pydantic model (frozen)
+    repository.py            ← UserRepository: create_user, get_by_username, verify_password
+  auth/
+    models.py                ← AuthBenchmarkResult, LoginRequest, TokenResponse, VerifyResponse, ...
+    classical_service.py     ← ClassicalAuthService: login() + verify_token() com perf_counter
+  api/
+    auth_routes.py           ← Router /auth: POST /register, /login-classical, /verify-classical
+```
+
+**Arquivos modificados:**
+- `main.py` → lifespan event chama `init_db()` no startup; inclui `auth_router`; versão `0.2.0`
+- `src/config.py` → adicionados `jwt_expiration_minutes`, `rsa_key_size`, `database_path`
+- `requirements.txt` → adicionados `PyJWT>=2.8.0`, `cryptography>=42.0.0`, `bcrypt>=4.0.0`
+- `.env` / `.env.example` → novas variáveis `JWT_EXPIRATION_MINUTES=30`, `RSA_KEY_SIZE=2048`, `DATABASE_PATH=data/pqc_auth.db`
+
+---
+
+#### Problema encontrado: passlib incompatível com bcrypt 5.x
+
+**Plano original:** usar `passlib[bcrypt]` para hashing de senha (biblioteca popular).
+
+**Erro ao executar:**
+```
+(trapped) error reading bcrypt version
+AttributeError: module 'bcrypt' has no attribute '__about__'
+ValueError: password cannot be longer than 72 bytes, truncate manually...
+```
+
+**Causa raiz:** `passlib 1.7.4` (última versão, sem atualizações desde 2020) usa a API interna do módulo `bcrypt` via `bcrypt.__about__.__version__`, que foi removida no `bcrypt 4.x+`. O projeto `passlib` está abandonado e não receberá correções.
+
+**Solução:** substituir `passlib` pelo módulo `bcrypt` diretamente, que tem API estável e simples:
+
+```python
+# Hash
+hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+# Verificar
+bcrypt.checkpw(plain.encode(), stored_hash.encode())
+```
+
+**Lição para o TCC:** dependências de segurança devem ser acompanhadas ativamente. Uma lib de hashing abandonada é um risco real em produção — para o contexto de benchmarking aqui, o impacto é zero, mas o padrão a seguir é usar o módulo nativo bem mantido.
+
+---
+
+#### Decisões de arquitetura tomadas na Fase 2
+
+**1. Chaves RSA geradas no startup, mantidas em memória**
+
+As chaves RSA-2048 são geradas uma única vez em `ClassicalAuthService.__init__()` e reutilizadas para todas as requisições do processo. Alternativas consideradas:
+
+| Abordagem | Prós | Contras |
+|-----------|------|---------|
+| Gerar no startup (escolhida) | Simples; espelha o comportamento PQC da Fase 3 | Chaves perdidas no restart |
+| Persistir em arquivo | Chaves estáveis entre restarts | Complexidade de segurança desnecessária para benchmarking |
+| Gerar por requisição | Máximo isolamento | Mede keygen + sign juntos — invalida comparação justa |
+
+A abordagem escolhida garante que as medições de `jwt_sign` e `jwt_verify` meçam **apenas a operação criptográfica**, sem incluir keygen no timing de cada request.
+
+**2. PyJWT para o fluxo JWT vs. `IDigitalSignature` para benchmark raw**
+
+Dois caminhos distintos foram criados intencionalmente:
+
+- `RSASignature(IDigitalSignature)` — assina/verifica **bytes puros** com RSA-PSS. Usado para benchmark raw na Fase 5 (comparação direta com `DilithiumSignature`).
+- `PyJWT` com `algorithm="RS256"` — usado no fluxo de autenticação real. Interno ao `ClassicalAuthService`, não exposto como interface.
+
+O `ClassicalAuthService.__init__()` converte as chaves DER → PEM **uma vez**, pois `RSASignature` retorna bytes DER (consistente com o contrato de `SignatureKeyPair` e com liboqs), mas PyJWT exige PEM para RS256.
+
+**3. Timing integrado no service layer**
+
+O `perf_counter()` envolve exatamente a operação criptográfica:
+
+```python
+# jwt_sign: apenas o encode (assinar o JWT com RSA)
+t0 = time.perf_counter()
+token = jwt.encode(payload, private_key_pem, algorithm="RS256")
+t1 = time.perf_counter()
+
+# jwt_verify: apenas o decode (verificar assinatura + expiração)
+t0 = time.perf_counter()
+claims = jwt.decode(token, public_key_pem, algorithms=["RS256"])
+t1 = time.perf_counter()
+```
+
+Isso exclui: latência de rede, parsing HTTP, acesso ao banco, serialização JSON. O objetivo é isolar o overhead criptográfico — o mesmo critério será aplicado nas Fases 3 e 5.
+
+**4. Singleton lazy para o service no router**
+
+```python
+_classical_service: ClassicalAuthService | None = None
+
+def _get_service() -> ClassicalAuthService:
+    global _classical_service
+    if _classical_service is None:
+        _classical_service = ClassicalAuthService(...)  # RSA keygen aqui
+    return _classical_service
+```
+
+A geração das chaves RSA ocorre na **primeira requisição**, não no import do módulo. Isso evita que o startup falhe se a geração de chaves tiver problema, e mantém o mesmo padrão do `_build_service()` já existente em `routes.py`.
+
+**5. SQLite com conexão por chamada (thread-safe)**
+
+FastAPI com uvicorn executa endpoints síncronos em um threadpool. Para evitar problemas de concorrência com SQLite, `get_connection()` cria **uma nova conexão por chamada**:
+
+```python
+@contextmanager
+def get_connection() -> Generator[sqlite3.Connection, None, None]:
+    conn = sqlite3.connect(settings.database_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+```
+
+Isso é suficiente para cargas de benchmarking — não é necessário pool de conexões para o volume de requisições do TCC.
+
+---
+
+#### Endpoints criados
+
+**`POST /auth/register`**
+```json
+// Request
+{"username": "alice", "password": "senha123"}
+
+// Response 200
+{"username": "alice", "message": "User created successfully."}
+
+// Response 409 (duplicata)
+{"detail": "Username already exists."}
+```
+
+**`POST /auth/login-classical`**
+```json
+// Request
+{"username": "alice", "password": "senha123"}
+
+// Response 200
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "algorithm": "RS256",
+  "timing": {
+    "operation": "jwt_sign",
+    "duration_ms": 1.823,
+    "algorithm": "RS256"
+  }
+}
+
+// Response 401 (senha errada)
+{"detail": "Invalid username or password."}
+```
+
+**`POST /auth/verify-classical`**
+```json
+// Request
+{"token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."}
+
+// Response 200
+{
+  "valid": true,
+  "claims": {
+    "sub": "alice",
+    "iat": 1742245200,
+    "exp": 1742247000
+  },
+  "timing": {
+    "operation": "jwt_verify",
+    "duration_ms": 0.294,
+    "algorithm": "RS256"
+  }
+}
+```
+
+---
+
+#### Primeiras medições do baseline clássico
+
+Ambiente: macOS, Apple Silicon (ARM64), Python 3.13, RSA-2048, SHA-256.
+
+> **Atenção:** estas são medições iniciais de single-run para validação funcional. A Fase 5 realizará `N=100` iterações com cálculo de média, desvio padrão, P95 e P99. Use estes valores apenas como referência de ordem de grandeza.
+
+| Operação | Medição (single-run) | Observação |
+|----------|---------------------|------------|
+| RSA-2048 keygen | ~50–100ms | Executado uma vez no startup; não impacta latência por request |
+| `jwt_sign` (RS256) | ~1–2ms (warm) | Primeira chamada pode ser ~44ms (cold start da lib `cryptography`) |
+| `jwt_verify` (RS256) | ~0.3–0.9ms | Verificação RSA é mais rápida que assinatura |
+
+**Observação sobre cold start:** A primeira chamada ao `jwt.encode()` apresenta latência elevada (~44ms) porque a biblioteca `cryptography` (escrita em Rust/C) carrega suas dependências nativas (`cffi`, `pycparser`) lazily na primeira invocação. A partir da segunda chamada, o tempo cai para a faixa esperada de 1–2ms. Os benchmarks da Fase 5 farão warmup antes de medir para obter os valores de regime permanente.
+
+---
+
+#### Estado atual do projeto
+
+```
+Python:              3.13
+liboqs (C):          0.15.0
+liboqs-python:       0.14.1
+PyJWT:               2.12.1
+cryptography:        46.0.5
+bcrypt:              5.0.0
+KEM ativo:           Kyber512 (equiv. FIPS: ML-KEM-512)
+Sig PQC ativo:       ML-DSA-44 (FIPS 204)
+Sig clássica:        RSA-2048 / RS256
+Banco:               SQLite via data/pqc_auth.db
+Smoke test PQC:      GET /pqc/health → 200 OK ✅
+Reg/Login/Verify:    POST /auth/* → 200 OK ✅
+```
+
+---
+
+### Próximos passos (Fase 3)
+
+- **Fase 3:** Autenticação PQC pura (sem RSA/JWT clássico)
+  - Criar `src/auth/pqc_service.py` — `PQCLoginService`:
+    - Login: gerar keypair Dilithium (ML-DSA-44), assinar payload com `DilithiumSignature`, retornar token PQC + timing
+    - Verify: verificar assinatura Dilithium, retornar claims + timing
+  - Criar endpoints `POST /auth/login-pqc` e `POST /auth/verify-pqc`
+  - Integrar KEM Kyber512 no handshake: `POST /auth/kem-exchange` (estabelecer shared secret)
+  - Retornar `AuthBenchmarkResult` com `algorithm: "ML-DSA-44"` para comparação direta com `"RS256"`
+- **Estrutura de token PQC:** definir formato (não é JWT padrão — JWT não suporta ML-DSA-44 nativamente; usar Base64url do payload + assinatura Dilithium)
+- **Comparação inicial:** após Fase 3, comparar `timing.duration_ms` de `/auth/login-classical` vs. `/auth/login-pqc` em chamadas reais
+
+---

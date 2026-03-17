@@ -36,6 +36,19 @@ class Settings(BaseSettings):
         gt=0,
         description="Number of iterations for each benchmark run (Phase 5).",
     )
+    jwt_expiration_minutes: int = Field(
+        default=30,
+        gt=0,
+        description="JWT token expiration time in minutes.",
+    )
+    rsa_key_size: int = Field(
+        default=2048,
+        description="RSA key size in bits for the classical authentication baseline.",
+    )
+    database_path: str = Field(
+        default="data/pqc_auth.db",
+        description="Path to the SQLite database file.",
+    )
 
 
 settings = Settings()
