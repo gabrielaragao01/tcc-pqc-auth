@@ -488,3 +488,25 @@ Reg/Login/Verify:    POST /auth/* → 200 OK ✅
 - **Comparação inicial:** após Fase 3, comparar `timing.duration_ms` de `/auth/login-classical` vs. `/auth/login-pqc` em chamadas reais
 
 ---
+
+## Decisão arquitetural — Formato do token PQC (Fase 3)
+
+JWT (RFC 7519) não suporta o algoritmo ML-DSA-44 nativamente. Para a Fase 3, adotamos um **formato JWT-like customizado**: `base64url(header).base64url(payload).base64url(signature)`, onde o header contém `{"alg": "ML-DSA-44", "typ": "JWT"}`.
+
+Esse formato não é JWT padrão (nenhuma biblioteca JWT o processará sem extensão), mas mantém a estrutura de três partes separadas por `.`, permite comparação direta com o token RS256 (mesmo payload, mesma estrutura, diferente algoritmo), e é o formato adotado em papers acadêmicos de PQC-JWT.
+
+**Implicação para o TCC:** o token RS256 tem ~200 bytes; o token ML-DSA-44 terá ~3.500 bytes (2420 bytes de assinatura em base64url). Esse overhead de tamanho será medido e discutido na análise.
+
+---
+
+## Por que SPHINCS+ foi excluído do escopo
+
+A Proposta do TCC menciona SPHINCS+ como candidato, mas o projeto foca em ML-DSA-44 para assinaturas pelos seguintes motivos:
+
+1. **Caso de uso diferente:** SPHINCS+ (FIPS 205) é hash-based stateless, otimizado para assinaturas de longa duração (firmware, certificados raiz). ML-DSA-44 é lattice-based, otimizado para autenticação de sessão — o escopo deste TCC.
+2. **Tamanho impraticável em web auth:** SPHINCS+ gera assinaturas de 8–50 KB (dependendo do nível de segurança), versus 2.420 bytes do ML-DSA-44. Um header `Authorization` de 50 KB por request torna o protocolo impraticável para web.
+3. **Cobertura completa dos tipos:** ML-DSA-44 (FIPS 204) + Kyber512 (FIPS 203) cobrem os dois tipos de operação PQC necessários para auth (assinatura + KEM). A Proposta diz "3–4 algoritmos no máximo".
+
+A exclusão será justificada explicitamente na seção de escopo do TCC escrito.
+
+---
