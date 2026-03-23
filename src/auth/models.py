@@ -55,3 +55,14 @@ class VerifyResponse(BaseModel):
     valid: bool = Field(description="Whether the token signature and expiry are valid.")
     claims: dict | None = Field(default=None, description="Decoded JWT claims if valid.")
     timing: AuthBenchmarkResult = Field(description="Benchmark timing for the verify operation.")
+
+
+class KEMExchangeResponse(BaseModel):
+    """Result of a full KEM round-trip (keygen → encapsulate → decapsulate)."""
+
+    model_config = {"frozen": True}
+
+    secrets_match: bool = Field(description="Whether shared secrets from encapsulate and decapsulate are identical.")
+    timing_keygen: AuthBenchmarkResult = Field(description="Benchmark timing for keypair generation.")
+    timing_encapsulate: AuthBenchmarkResult = Field(description="Benchmark timing for encapsulation.")
+    timing_decapsulate: AuthBenchmarkResult = Field(description="Benchmark timing for decapsulation.")

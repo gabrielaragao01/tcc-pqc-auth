@@ -78,7 +78,7 @@ Essa assimetria será comparada com ML-DSA-44 na Fase 3, onde a diferença entre
 | Algoritmo | Tipo | Keygen | Sign/ms (warm) | Tamanho assinatura |
 |-----------|------|--------|-----------------|-------------------|
 | RSA-2048 (RS256) | Clássico | ~50–100ms | ~1–2ms | 256 bytes |
-| ML-DSA-44 | PQC (FIPS 204) | — | — | 2420 bytes |
+| ML-DSA-44 | PQC (FIPS 204) | ~0.3ms (keygen) | ~0.107ms | 2420 bytes |
 | Kyber512 + ML-DSA-44 | Híbrido | — | — | — |
 
 ### Verify / Token Verification
@@ -86,7 +86,7 @@ Essa assimetria será comparada com ML-DSA-44 na Fase 3, onde a diferença entre
 | Algoritmo | Tipo | Verify/ms (warm) |
 |-----------|------|-----------------|
 | RSA-2048 (RS256) | Clássico | ~0.3ms |
-| ML-DSA-44 | PQC | — |
+| ML-DSA-44 | PQC | ~0.038ms |
 
 ### Tamanhos de chave comparados
 
@@ -100,18 +100,37 @@ Essa assimetria será comparada com ML-DSA-44 na Fase 3, onde a diferença entre
 
 ---
 
-## Fase 3 — PQC Puro (a preencher)
+## Fase 3 — PQC Puro (ML-DSA-44 + Kyber512)
 
-**Data de medição:** —
-**Status:** Planejado
+**Data de medição:** 2026-03-23
+**Status:** Medições iniciais de validação funcional (single-run, warm)
 
-| Operação | Algoritmo | duration_ms (avg) | duration_ms (P95) |
-|----------|-----------|------------------|------------------|
-| `pqc_sign` | ML-DSA-44 | — | — |
-| `pqc_verify` | ML-DSA-44 | — | — |
-| `kem_keygen` | Kyber512 | — | — |
-| `kem_encapsulate` | Kyber512 | — | — |
-| `kem_decapsulate` | Kyber512 | — | — |
+> ⚠️ Estes valores são single-run coletados após warmup durante a validação da Fase 3. A Fase 5 realizará medições formais com N=100 iterações, média/mediana/P95/P99 e exportação para CSV.
+
+### ML-DSA-44 — Sign / Verify
+
+| Operação | Algoritmo | duration_ms (single-run, warm) |
+|----------|-----------|-------------------------------|
+| `pqc_sign` | ML-DSA-44 | ~0.107ms |
+| `pqc_verify` | ML-DSA-44 | ~0.038ms |
+
+### Kyber512 — KEM Round-trip
+
+| Operação | Algoritmo | duration_ms (single-run, warm) |
+|----------|-----------|-------------------------------|
+| `kem_keygen` | Kyber512 | ~0.305ms |
+| `kem_encapsulate` | Kyber512 | ~0.259ms |
+| `kem_decapsulate` | Kyber512 | ~0.019ms |
+
+### Tamanho do token PQC
+
+| Métrica | Valor |
+|---------|-------|
+| Comprimento do token ML-DSA-44 | 3343 chars (~3.3 KB) |
+| Comprimento do token RS256 | ~200 bytes |
+| Fator de aumento | ~16.7× |
+
+A diferença de tamanho deve-se principalmente à assinatura ML-DSA-44 (2420 bytes em base64url, vs 342 bytes da assinatura RSA-2048).
 
 ---
 

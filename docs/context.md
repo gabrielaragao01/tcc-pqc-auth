@@ -499,6 +499,102 @@ Esse formato não é JWT padrão (nenhuma biblioteca JWT o processará sem exten
 
 ---
 
+## Semana 4 (2026-03-23)
+
+### Fase 3 — Autenticação PQC Pura (ML-DSA-44 + Kyber512)
+
+#### O que foi implementado
+
+- `src/auth/models.py` — adicionado `KEMExchangeResponse` (frozen Pydantic): `secrets_match`, `timing_keygen`, `timing_encapsulate`, `timing_decapsulate`
+- `src/auth/pqc_service.py` — `PQCLoginService` com `login()`, `verify_token()` e `kem_exchange()`; zero imports de `oqs` (depende exclusivamente de `IDigitalSignature` + `IKeyEncapsulation`)
+- `src/api/pqc_auth_routes.py` — router com `POST /auth/login-pqc`, `POST /auth/verify-pqc`, `POST /auth/kem-exchange`
+- `main.py` — registrado `pqc_auth_router`; versão `0.3.0`; mensagem root atualizada para "Phase 3 active"
+- `tests/test_auth_pqc.py` — 11 testes cobrindo login (4), verify (5) e KEM exchange (2)
+
+**Suite completa:** 42 testes, 0 falhas.
+
+---
+
+#### Decisão — Formato do token PQC (implementação)
+
+JWT (RFC 7519) não suporta ML-DSA-44. Formato adotado:
+
+```
+base64url(header) . base64url(payload) . base64url(signature)
+```
+
+- **Header:** `{"alg":"ML-DSA-44","typ":"PQC"}`
+- **Payload:** `{"sub":"<user>","iat":<ts>,"exp":<ts>}` — mesmo esquema do JWT RS256
+- **Mensagem assinada:** `header_b64 + "." + payload_b64` (bytes UTF-8)
+- **Verificação de `exp`:** manual, após a verificação da assinatura; fora do `perf_counter()` (não é operação cripto)
+
+O `json.dumps` usa `separators=(",",":")` (JSON compacto) para garantir determinismo da mensagem assinada.
+
+Tamanho real medido: **3343 chars** (~3.3 KB) vs ~200 bytes do RS256. O overhead de tamanho é esperado: 2420 bytes de assinatura ML-DSA-44 em base64url.
+
+---
+
+#### Decisão — KEM Exchange em endpoint único
+
+Em produção real, o KEM envolve dois agentes (cliente encapsula, servidor decapsula). Para benchmarking, `POST /auth/kem-exchange` executa o round-trip completo (keygen → encapsulate → decapsulate) em um único request, com timing isolado por operação. Isso permite medir os três custos individualmente sem overhead de rede.
+
+---
+
+#### Primeiras medições da Fase 3 (single-run, warm)
+
+Ambiente: macOS, Apple Silicon (ARM64), Python 3.13, liboqs 0.15.0.
+
+> ⚠️ Medições de single-run para validação funcional. A Fase 5 realizará N=100 iterações com média, P95 e P99.
+
+| Operação | Algoritmo | Medição (warm) |
+|----------|-----------|---------------|
+| `pqc_sign` | ML-DSA-44 | ~0.107ms |
+| `pqc_verify` | ML-DSA-44 | ~0.038ms |
+| `kem_keygen` | Kyber512 | ~0.305ms |
+| `kem_encapsulate` | Kyber512 | ~0.259ms |
+| `kem_decapsulate` | Kyber512 | ~0.019ms |
+
+**Comparação preliminar com RS256:**
+
+| Operação | RS256 (warm) | ML-DSA-44 (warm) | Razão |
+|----------|-------------|-----------------|-------|
+| Sign / `pqc_sign` | ~1–2ms | ~0.107ms | ML-DSA-44 é **mais rápido** |
+| Verify / `pqc_verify` | ~0.3ms | ~0.038ms | ML-DSA-44 é **mais rápido** |
+
+Resultado surpreendente: ML-DSA-44 é significativamente mais rápido que RSA-2048 nas operações de sign e verify em Apple Silicon (ARM64). A hipótese é que as operações de lattice (adição/multiplicação de polinômios sobre $\mathbb{Z}_q$) são muito mais eficientes em CPUs modernas do que a exponenciação modular RSA. A Fase 5 confirmará com N=100 iterações.
+
+A desvantagem PQC está no **tamanho** (token 3.3 KB vs 200 bytes), não na velocidade.
+
+---
+
+#### Estado atual do projeto (Fase 3 completa)
+
+```
+Python:              3.13
+liboqs (C):          0.15.0
+liboqs-python:       0.14.1
+PyJWT:               2.12.1
+cryptography:        46.0.5
+bcrypt:              5.0.0
+KEM ativo:           Kyber512 (equiv. FIPS: ML-KEM-512)
+Sig PQC ativo:       ML-DSA-44 (FIPS 204)
+Sig clássica:        RSA-2048 / RS256
+Banco:               SQLite via data/pqc_auth.db
+Testes:              42 passed
+Endpoints PQC:       POST /auth/login-pqc, /verify-pqc, /kem-exchange ✅
+```
+
+---
+
+### Próximos passos (Fase 4)
+
+- **Fase 4:** Modo híbrido — combinar RS256 + ML-DSA-44 no mesmo fluxo de autenticação
+  - Definir estratégia híbrida: token duplo (RS256 + PQC) ou token com dupla assinatura
+  - Endpoint `POST /auth/login-hybrid` retornando ambos os tokens + timings comparativos
+  - Permite migração gradual: clientes legados aceitam RS256; clientes PQC-aware usam ML-DSA-44
+
+---
+
 ## Por que SPHINCS+ foi excluído do escopo
 
 A Proposta do TCC menciona SPHINCS+ como candidato, mas o projeto foca em ML-DSA-44 para assinaturas pelos seguintes motivos:
