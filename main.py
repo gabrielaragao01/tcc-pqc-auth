@@ -7,6 +7,7 @@ from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
 
 from src.api.routes import router as pqc_router
 from src.api.auth_routes import router as auth_router
+from src.api.pqc_auth_routes import router as pqc_auth_router
 from src.db.database import init_db
 
 
@@ -24,14 +25,15 @@ app = FastAPI(
         "Compares classical (RSA/ECDSA), pure PQC (Kyber + Dilithium), "
         "and hybrid authentication modes."
     ),
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
 app.include_router(pqc_router)
 app.include_router(auth_router)
+app.include_router(pqc_auth_router)
 
 
 @app.get("/")
 def read_root() -> dict[str, str]:
-    return {"message": "PQC Auth API — Phase 2 active. Visit /docs for the API reference."}
+    return {"message": "PQC Auth API — Phase 3 active. Visit /docs for the API reference."}
