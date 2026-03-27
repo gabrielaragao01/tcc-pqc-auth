@@ -134,6 +134,54 @@ A diferença de tamanho deve-se principalmente à assinatura ML-DSA-44 (2420 byt
 
 ---
 
+## Fase 4 — Modo Híbrido (Comparação Direta)
+
+**Data de medição:** 2026-03-23
+**Status:** Medições iniciais via endpoint híbrido (single-run, warm)
+
+> ⚠️ Valores de single-run para validação funcional. A Fase 5 realizará medições formais com N=100 iterações.
+
+### Login Híbrido — Sign (mesma request, mesmo payload)
+
+O endpoint `POST /auth/login-hybrid` assina o mesmo payload com ambos os algoritmos na mesma request, permitindo comparação direta sem variação de ambiente.
+
+| Operação | Algoritmo | duration_ms (single-run, warm) |
+|----------|-----------|-------------------------------|
+| `jwt_sign` | RS256 (RSA-2048) | ~1–2ms |
+| `pqc_sign` | ML-DSA-44 | ~0.107ms |
+
+**Razão de performance:** ML-DSA-44 é ~10–19× mais rápido que RS256 para assinatura.
+
+### Verify Híbrido — Verificação (mesma request, ambos os tokens)
+
+| Operação | Algoritmo | duration_ms (single-run, warm) |
+|----------|-----------|-------------------------------|
+| `jwt_verify` | RS256 (RSA-2048) | ~0.3ms |
+| `pqc_verify` | ML-DSA-44 | ~0.038ms |
+
+**Razão de performance:** ML-DSA-44 é ~8× mais rápido que RS256 para verificação.
+
+### Tamanho do response híbrido
+
+| Componente | Tamanho |
+|-----------|---------|
+| Token RS256 (JWT) | ~200 bytes |
+| Token ML-DSA-44 (custom) | ~3343 chars (~3.3 KB) |
+| Response total (login-hybrid) | ~3.6 KB |
+
+### Trade-off resumido (Fase 4)
+
+| Métrica | RS256 (clássico) | ML-DSA-44 (PQC) | Vantagem |
+|---------|------------------|------------------|----------|
+| Sign latency | ~1–2ms | ~0.107ms | PQC |
+| Verify latency | ~0.3ms | ~0.038ms | PQC |
+| Token size | ~200 bytes | ~3.3 KB | Clássico |
+| Key size (pub) | 256 bytes | 1312 bytes | Clássico |
+| Key size (priv) | ~1190 bytes | 2528 bytes | Clássico |
+| Quantum-safe | Não | Sim | PQC |
+
+---
+
 ## Fase 5 — Benchmark Formal (a preencher)
 
 **Metodologia planejada:**

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TCC (Trabalho de Conclusão de Curso) — Post-Quantum Cryptography (PQC) authentication system for web applications. The project benchmarks PQC algorithms (Kyber512 KEM, ML-DSA-44 signatures via liboqs) against classical cryptography (RSA-2048 + JWT RS256). Built in 5 phases; **currently in Phase 3 (complete)**.
+TCC (Trabalho de Conclusão de Curso) — Post-Quantum Cryptography (PQC) authentication system for web applications. The project benchmarks PQC algorithms (Kyber512 KEM, ML-DSA-44 signatures via liboqs) against classical cryptography (RSA-2048 + JWT RS256). Built in 5 phases; **currently in Phase 4 (complete)**.
 
 > **Library versions in use:** liboqs 0.15.0 (C library, compiled from source) + liboqs-python 0.14.1 (Python wrapper). Version mismatch is cosmetic — the mathematical core of all algorithms is identical. See `docs/context.md` Semana 2 for full context.
 
@@ -37,7 +37,7 @@ Smoke test endpoints: `GET /pqc/health`, `GET /docs`
 
 Clean architecture with interface-based dependency injection, designed to grow across 5 phases without breaking existing layers.
 
-### Full Directory Structure (Phase 2)
+### Full Directory Structure (Phase 4)
 
 ```
 src/
@@ -62,23 +62,25 @@ src/
     repository.py                 ← UserRepository (create_user, get_by_username, verify_password)
   auth/
     __init__.py
-    models.py                     ← AuthBenchmarkResult, LoginRequest, TokenResponse, VerifyResponse, ...
+    models.py                     ← AuthBenchmarkResult, LoginRequest, TokenResponse, VerifyResponse, HybridTokenResponse, ...
     service.py                    ← PQCAuthService (smoke tests, Phase 1)
     classical_service.py          ← ClassicalAuthService (login + verify with timing, Phase 2)
     pqc_service.py                ← PQCLoginService (login + verify + kem_exchange with timing, Phase 3)
+    hybrid_service.py             ← HybridAuthService (composes Classical + PQC, Phase 4)
   api/
     __init__.py
     routes.py                     ← GET /pqc/health (Phase 1)
     auth_routes.py                ← POST /auth/register, /login-classical, /verify-classical (Phase 2)
     pqc_auth_routes.py            ← POST /auth/login-pqc, /verify-pqc, /kem-exchange (Phase 3)
+    hybrid_auth_routes.py         ← POST /auth/login-hybrid, /auth/verify-hybrid (Phase 4)
 main.py                           ← FastAPI app, lifespan (init_db), includes all routers
 ```
 
 ### Layer Hierarchy
 
 ```
-API Layer (src/api/routes.py, src/api/auth_routes.py, src/api/pqc_auth_routes.py)
-  └── Service Layer (src/auth/service.py, src/auth/classical_service.py, src/auth/pqc_service.py)
+API Layer (src/api/routes.py, auth_routes.py, pqc_auth_routes.py, hybrid_auth_routes.py)
+  └── Service Layer (src/auth/service.py, classical_service.py, pqc_service.py, hybrid_service.py)
         └── Crypto Interfaces (src/crypto/interfaces.py)
               ├── KEM — PQC (src/crypto/kem/kyber.py)          ← liboqs only
               ├── Signature — PQC (src/crypto/signatures/dilithium.py)  ← liboqs only
@@ -107,13 +109,14 @@ Both PQC implementations use liboqs context managers (`with oqs.KeyEncapsulation
 `KEMKeyPair`, `KEMResult`, `SignatureKeyPair`, `SmokeTestResult`, `PQCSmokeTestReport`
 
 **Auth models** (`src/auth/models.py`) — frozen Pydantic value objects:
-`AuthBenchmarkResult`, `LoginRequest`, `RegisterRequest`, `RegisterResponse`, `TokenResponse`, `VerifyRequest`, `VerifyResponse`
+`AuthBenchmarkResult`, `LoginRequest`, `RegisterRequest`, `RegisterResponse`, `TokenResponse`, `VerifyRequest`, `VerifyResponse`, `KEMExchangeResponse`, `HybridTokenResponse`, `HybridVerifyRequest`, `HybridVerifyResponse`
 
 ### Service Layer
 
 - `PQCAuthService` (`src/auth/service.py`) — injected with KEM + signature impls; runs smoke tests; Phase 1
 - `ClassicalAuthService` (`src/auth/classical_service.py`) — injected with `RSASignature` + `UserRepository`; generates RSA keypair once at init; `login()` and `verify_token()` each return their result plus an `AuthBenchmarkResult` with `duration_ms`
 - `PQCLoginService` (`src/auth/pqc_service.py`) — injected with `DilithiumSignature` + `KyberKEM` + `UserRepository`; generates ML-DSA-44 keypair once at init; `login()` and `verify_token()` use custom base64url token format; `kem_exchange()` runs full Kyber512 round-trip with per-operation timing
+- `HybridAuthService` (`src/auth/hybrid_service.py`) — composes `ClassicalAuthService` + `PQCLoginService` via constructor injection; `login()` returns dual tokens (RS256 + ML-DSA-44) with separate timings; `verify_tokens()` verifies both independently with comparative timings
 
 ### Database Layer (`src/db/`)
 
@@ -139,7 +142,7 @@ Single `settings` singleton via `pydantic-settings`, loaded from `.env`.
 | 1 | Setup: liboqs, KEM, signatures, clean arch | ✅ Complete |
 | 2 | Classical baseline: RSA-2048, JWT RS256, SQLite, `/auth/*` endpoints | ✅ Complete |
 | 3 | Pure PQC authentication: ML-DSA-44 tokens, Kyber512 KEM handshake | ✅ Complete |
-| 4 | Hybrid mode: classical + PQC side by side | Planned |
+| 4 | Hybrid mode: classical + PQC side by side, dual-token strategy | ✅ Complete |
 | 5 | Benchmarking & performance analysis: N=100 iterations, CSV export, charts | Planned |
 
 Development diary with architecture decisions: `docs/context.md` (Portuguese).

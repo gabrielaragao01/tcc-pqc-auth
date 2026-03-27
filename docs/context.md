@@ -589,9 +589,192 @@ Endpoints PQC:       POST /auth/login-pqc, /verify-pqc, /kem-exchange ✅
 ### Próximos passos (Fase 4)
 
 - **Fase 4:** Modo híbrido — combinar RS256 + ML-DSA-44 no mesmo fluxo de autenticação
-  - Definir estratégia híbrida: token duplo (RS256 + PQC) ou token com dupla assinatura
-  - Endpoint `POST /auth/login-hybrid` retornando ambos os tokens + timings comparativos
-  - Permite migração gradual: clientes legados aceitam RS256; clientes PQC-aware usam ML-DSA-44
+
+---
+
+## Semana 5 (2026-03-23)
+
+### Fase 4 — Modo Híbrido (Classical + PQC side by side)
+
+#### O que foi implementado
+
+A Fase 4 combina os dois modos de autenticação (clássico e PQC) em um único fluxo, permitindo comparação direta de performance e migração gradual.
+
+**Arquivos criados:**
+
+```
+src/
+  auth/
+    hybrid_service.py              ← HybridAuthService (compõe Classical + PQC services)
+  api/
+    hybrid_auth_routes.py          ← POST /auth/login-hybrid, /auth/verify-hybrid
+tests/
+  test_auth_hybrid.py              ← 11 testes cobrindo login e verificação híbrida
+```
+
+**Arquivos modificados:**
+- `src/auth/models.py` → adicionados `HybridTokenResponse`, `HybridVerifyRequest`, `HybridVerifyResponse`
+- `main.py` → registrado `hybrid_auth_router`; versão `0.4.0`; mensagem root "Phase 4 active"
+
+**Suite completa:** 53 testes, 0 falhas.
+
+---
+
+#### Decisão — Estratégia híbrida: dual token (token duplo)
+
+Duas estratégias foram consideradas:
+
+| Estratégia | Descrição | Prós | Contras |
+|------------|-----------|------|---------|
+| **Token duplo** (escolhida) | Login retorna dois tokens independentes (RS256 + ML-DSA-44) | Simples; comparação direta; migração gradual; cliente escolhe qual usar | Dois tokens no response (maior payload HTTP) |
+| Dupla assinatura | Token único com duas assinaturas concatenadas | Token único no header | Complexo; formato não-padrão; dificulta comparação isolada |
+
+**Por que token duplo:** O objetivo do TCC é **comparar performance**, não construir um protocolo híbrido otimizado. Com tokens independentes, cada operação (sign RS256, sign ML-DSA-44) é medida isoladamente com `perf_counter()`, e o cliente pode verificar um ou ambos. Isso também espelha a estratégia de migração gradual recomendada pelo NIST (Cryptographic Agility): sistemas em transição aceitam ambos os formatos simultaneamente.
+
+---
+
+#### Decisão — Composição vs. herança no HybridAuthService
+
+`HybridAuthService` **compõe** `ClassicalAuthService` e `PQCLoginService` internamente, em vez de herdar de ambos ou duplicar lógica:
+
+```python
+class HybridAuthService:
+    def __init__(self, classical_signature, pqc_signature, kem, user_repo):
+        self._classical = ClassicalAuthService(classical_signature, user_repo)
+        self._pqc = PQCLoginService(pqc_signature, kem, user_repo)
+```
+
+**Vantagem:** zero duplicação de lógica criptográfica. Se o formato do token PQC mudar, a mudança fica em `PQCLoginService` e o híbrido herda automaticamente.
+
+**Trade-off aceito:** `login()` valida as credenciais bcrypt **duas vezes** (uma em cada service interno). Alternativa seria extrair a validação para fora, mas isso quebraria a interface dos serviços existentes. O custo é irrelevante: bcrypt.verify ~1ms, e não é contabilizado no `timing.duration_ms` (está fora do `perf_counter()`).
+
+---
+
+#### Decisão — Claims no verify híbrido
+
+Quando ambos os tokens são válidos, os claims retornados vêm do **token clássico** (JWT padrão). Se apenas o PQC for válido, os claims vêm dele. Isso é consistente com o cenário de migração: o token clássico é a "fonte de verdade" durante a transição.
+
+---
+
+#### Endpoints criados
+
+**`POST /auth/login-hybrid`**
+```json
+// Request
+{"username": "alice", "password": "senha123"}
+
+// Response 200
+{
+  "classical_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "pqc_token": "eyJhbGciOiJNTC1EU0EtNDQiLCJ0eXAiOiJQUUMifQ...",
+  "token_type": "bearer",
+  "timing_classical": {
+    "operation": "jwt_sign",
+    "duration_ms": 1.823,
+    "algorithm": "RS256"
+  },
+  "timing_pqc": {
+    "operation": "pqc_sign",
+    "duration_ms": 0.107,
+    "algorithm": "ML-DSA-44"
+  }
+}
+
+// Response 401
+{"detail": "Invalid username or password."}
+```
+
+**`POST /auth/verify-hybrid`**
+```json
+// Request
+{
+  "classical_token": "eyJhbGciOiJSUzI1NiIs...",
+  "pqc_token": "eyJhbGciOiJNTC1EU0EtNDQi..."
+}
+
+// Response 200
+{
+  "classical_valid": true,
+  "pqc_valid": true,
+  "claims": {
+    "sub": "alice",
+    "iat": 1742245200,
+    "exp": 1742247000
+  },
+  "timing_classical": {
+    "operation": "jwt_verify",
+    "duration_ms": 0.294,
+    "algorithm": "RS256"
+  },
+  "timing_pqc": {
+    "operation": "pqc_verify",
+    "duration_ms": 0.038,
+    "algorithm": "ML-DSA-44"
+  }
+}
+```
+
+---
+
+#### Testes criados (11 testes)
+
+| Grupo | Teste | O que valida |
+|-------|-------|-------------|
+| Login | `test_login_hybrid_returns_both_tokens` | Response contém ambos os tokens não-vazios |
+| Login | `test_login_hybrid_classical_is_rs256` | Timing clássico: algorithm RS256, operation jwt_sign |
+| Login | `test_login_hybrid_pqc_is_mldsa44` | Timing PQC: algorithm ML-DSA-44, operation pqc_sign |
+| Login | `test_login_hybrid_timings_are_positive` | Ambos os timings > 0ms |
+| Login | `test_login_hybrid_wrong_password_raises` | ValueError com senha errada |
+| Login | `test_login_hybrid_unknown_user_raises` | ValueError com user inexistente |
+| Verify | `test_verify_hybrid_both_valid` | Ambos válidos, claims corretos |
+| Verify | `test_verify_hybrid_classical_invalid` | Token clássico inválido, PQC válido → claims do PQC |
+| Verify | `test_verify_hybrid_pqc_invalid` | PQC inválido, clássico válido → claims do clássico |
+| Verify | `test_verify_hybrid_both_invalid` | Ambos inválidos → claims None |
+| Verify | `test_verify_hybrid_timings_are_positive` | Timings de verify > 0 com algoritmos corretos |
+
+---
+
+#### Aprendizados da Fase 4
+
+**1. Composição é poderosa em clean architecture:**
+A decisão SOLID da Fase 1 pagou dividendos aqui. O `HybridAuthService` tem apenas ~40 linhas de código porque toda a lógica real já existe nos services das Fases 2 e 3. Zero duplicação, zero refatoração.
+
+**2. O padrão de singleton lazy se mantém consistente:**
+`hybrid_auth_routes.py` usa o mesmo padrão `_get_service()` das rotas anteriores. Três singletons independentes (clássico, PQC, híbrido) coexistem sem conflito — cada um gera suas chaves no startup da primeira request.
+
+**3. A comparação direta confirma a tendência:**
+Mesmo em chamadas manuais (single-run), o endpoint híbrido permite ver lado a lado que ML-DSA-44 é consistentemente mais rápido que RS256 em sign e verify. A Fase 5 formalizará isso com N=100 iterações.
+
+---
+
+#### Estado atual do projeto (Fase 4 completa)
+
+```
+Python:              3.13
+liboqs (C):          0.15.0
+liboqs-python:       0.14.1
+PyJWT:               2.12.1
+cryptography:        46.0.5
+bcrypt:              5.0.0
+KEM ativo:           Kyber512 (equiv. FIPS: ML-KEM-512)
+Sig PQC ativo:       ML-DSA-44 (FIPS 204)
+Sig clássica:        RSA-2048 / RS256
+Banco:               SQLite via data/pqc_auth.db
+Testes:              53 passed
+Endpoints híbridos:  POST /auth/login-hybrid, /verify-hybrid ✅
+```
+
+---
+
+### Próximos passos (Fase 5)
+
+- **Fase 5:** Benchmarking formal e análise de performance
+  - Loop de N=100 iterações com warmup=10 para cada operação (jwt_sign, jwt_verify, pqc_sign, pqc_verify, kem_*)
+  - Cálculo de média, mediana, desvio padrão, P95, P99
+  - Exportação para CSV em `results/`
+  - Gráficos comparativos (matplotlib/seaborn): barras, box plots, violin plots
+  - Medição de memória com `psutil` (RSS antes/depois de cada operação)
+  - Análise qualitativa: tamanho de token, tamanho de chave, compatibilidade
 
 ---
 
