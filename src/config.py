@@ -24,8 +24,8 @@ class Settings(BaseSettings):
         description="KEM algorithm name as accepted by liboqs (e.g. 'Kyber512', 'Kyber768').",
     )
     sig_algorithm: str = Field(
-        default="Dilithium2",
-        description="Digital signature algorithm name as accepted by liboqs.",
+        default="ML-DSA-44",
+        description="Digital signature algorithm name as accepted by liboqs (FIPS 204).",
     )
     classical_algorithm: str = Field(
         default="RS256",
@@ -35,6 +35,11 @@ class Settings(BaseSettings):
         default=100,
         gt=0,
         description="Number of iterations for each benchmark run (Phase 5).",
+    )
+    benchmark_warmup: int = Field(
+        default=10,
+        gt=0,
+        description="Warmup iterations before measurement (discarded).",
     )
     jwt_expiration_minutes: int = Field(
         default=30,

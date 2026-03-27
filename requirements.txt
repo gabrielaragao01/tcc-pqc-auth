@@ -44,3 +44,8 @@ liboqs-python
 PyJWT>=2.8.0
 cryptography>=42.0.0
 bcrypt>=4.0.0
+psutil>=5.9.0
+pandas>=2.0.0
+matplotlib>=3.8.0
+seaborn>=0.13.0
+numpy>=1.26.0

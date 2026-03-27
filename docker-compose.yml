@@ -8,3 +8,14 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+
+  benchmark:
+    build: .
+    volumes:
+      - ./results:/app/results
+      - ./data:/app/data
+    env_file:
+      - .env
+    command: ["python", "-m", "benchmark.runner"]
+    profiles:
+      - benchmark

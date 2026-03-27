@@ -26,7 +26,7 @@ app = FastAPI(
         "Compares classical (RSA/ECDSA), pure PQC (Kyber + Dilithium), "
         "and hybrid authentication modes."
     ),
-    version="0.4.0",
+    version="0.5.0",
     lifespan=lifespan,
 )
 
@@ -38,4 +38,4 @@ app.include_router(hybrid_auth_router)
 
 @app.get("/")
 def read_root() -> dict[str, str]:
-    return {"message": "PQC Auth API — Phase 4 active. Visit /docs for the API reference."}
+    return {"message": "PQC Auth API — Phase 5 active. Visit /docs for the API reference."}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TCC (Trabalho de Conclusão de Curso) — Post-Quantum Cryptography (PQC) authentication system for web applications. The project benchmarks PQC algorithms (Kyber512 KEM, ML-DSA-44 signatures via liboqs) against classical cryptography (RSA-2048 + JWT RS256). Built in 5 phases; **currently in Phase 4 (complete)**.
+TCC (Trabalho de Conclusão de Curso) — Post-Quantum Cryptography (PQC) authentication system for web applications. The project benchmarks PQC algorithms (Kyber512 KEM, ML-DSA-44 signatures via liboqs) against classical cryptography (RSA-2048 + JWT RS256). Built in 5 phases; **all phases complete**.
 
 > **Library versions in use:** liboqs 0.15.0 (C library, compiled from source) + liboqs-python 0.14.1 (Python wrapper). Version mismatch is cosmetic — the mathematical core of all algorithms is identical. See `docs/context.md` Semana 2 for full context.
 
@@ -27,6 +27,7 @@ Configuration is in `.env` — key variables:
 - `SIG_ALGORITHM=ML-DSA-44` — PQC signature algorithm (FIPS 204, formerly Dilithium2)
 - `CLASSICAL_ALGORITHM=RS256` — classical baseline JWT algorithm
 - `BENCHMARK_ITERATIONS=100` — perf test iterations (Phase 5)
+- `BENCHMARK_WARMUP=10` — warmup iterations before measurement (discarded)
 - `JWT_EXPIRATION_MINUTES=30` — token lifetime
 - `RSA_KEY_SIZE=2048` — RSA key size for classical baseline
 - `DATABASE_PATH=data/pqc_auth.db` — SQLite file path
@@ -37,9 +38,20 @@ Smoke test endpoints: `GET /pqc/health`, `GET /docs`
 
 Clean architecture with interface-based dependency injection, designed to grow across 5 phases without breaking existing layers.
 
-### Full Directory Structure (Phase 4)
+### Full Directory Structure (Phase 5)
 
 ```
+benchmark/
+  __init__.py                     ← package init
+  __main__.py                     ← allows `python -m benchmark.runner`
+  runner.py                       ← benchmark runner: warmup, N=100, timing + tracemalloc
+  metrics.py                      ← BenchmarkSample dataclass, detect_environment()
+  analysis.py                     ← statistics: mean, median, stdev, P95, P99 + CSV export
+  charts.py                       ← bar charts, box plots, violin plots (matplotlib/seaborn)
+  throughput.py                   ← HTTP throughput test via httpx
+results/                          ← benchmark output (CSVs, PNGs) — gitignored except .gitkeep
+scripts/
+  run_benchmarks.sh               ← full benchmark pipeline: runner → analysis → charts
 src/
   config.py                       ← pydantic-settings singleton, reads .env
   crypto/
@@ -143,7 +155,27 @@ Single `settings` singleton via `pydantic-settings`, loaded from `.env`.
 | 2 | Classical baseline: RSA-2048, JWT RS256, SQLite, `/auth/*` endpoints | ✅ Complete |
 | 3 | Pure PQC authentication: ML-DSA-44 tokens, Kyber512 KEM handshake | ✅ Complete |
 | 4 | Hybrid mode: classical + PQC side by side, dual-token strategy | ✅ Complete |
-| 5 | Benchmarking & performance analysis: N=100 iterations, CSV export, charts | Planned |
+| 5 | Benchmarking & performance analysis: N=100 iterations, CSV export, charts | ✅ Complete |
 
 Development diary with architecture decisions: `docs/context.md` (Portuguese).
-Baseline timing data: `docs/benchmarks.md`.
+Formal benchmark data (N=100): `docs/benchmarks.md`.
+Raw data + charts: `results/` directory.
+
+## Running Benchmarks (Phase 5)
+
+```bash
+# Full benchmark pipeline (local, ~2 min)
+./scripts/run_benchmarks.sh
+
+# Or step by step:
+python -m benchmark.runner --environment arm64-macos
+python -m benchmark.analysis
+python -m benchmark.charts
+
+# HTTP throughput test (requires running server)
+uvicorn main:app &
+python -m benchmark.throughput
+
+# Via Docker
+docker compose --profile benchmark run benchmark
+```

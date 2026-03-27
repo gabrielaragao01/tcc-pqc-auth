@@ -2,27 +2,36 @@
 Você é um especialista em Segurança da Informação e Engenharia de Backend. Este projeto foca na implementação e benchmarking de algoritmos de Criptografia Pós-Quântica (PQC) padronizados pelo NIST em um contexto de autenticação Web.
 
 ## Stack Técnica e Diretrizes
-- [cite_start]**Linguagem:** Python 3.10+ (Assíncrono)[cite: 291].
-- [cite_start]**Framework:** FastAPI[cite: 5].
-- [cite_start]**Criptografia:** - PQC: liboqs-python (Kyber512 para KEM, Dilithium2 para Assinatura)[cite: 121, 128].
-    - [cite_start]Clássica: cryptography/pyjwt (RSA/ECDSA) [cite: 307-312].
-- [cite_start]**Banco de Dados:** SQLite (foco em criptografia, não persistência complexa)[cite: 11].
-- [cite_start]**Ambiente:** Docker Compose obrigatório para reprodutibilidade[cite: 10, 337].
+- **Linguagem:** Python 3.13+
+- **Framework:** FastAPI
+- **Criptografia:**
+    - PQC: liboqs-python (Kyber512 para KEM, ML-DSA-44 para Assinatura)
+    - Clássica: cryptography/pyjwt (RSA-2048, RS256)
+- **Banco de Dados:** SQLite (foco em criptografia, não persistência complexa)
+- **Ambiente:** Docker Compose para reprodutibilidade
 
 ## Estrutura do Projeto (RESPEITE ESTA HIERARQUIA)
-- [cite_start]`src/crypto/`: Lógica de wrappers para classical.py, pqc.py e hybrid.py [cite: 40-42].
-- [cite_start]`src/auth/`: Lógica de autenticação e geração de tokens[cite: 43].
-- [cite_start]`src/api/`: Endpoints FastAPI (Ex: /auth/login-pqc, /auth/login-hybrid) [cite: 67-72].
-- [cite_start]`benchmark/`: Scripts de coleta de métricas (latência e memória)[cite: 83].
-- [cite_start]`results/`: Armazenamento de CSVs e PNGs de análise[cite: 100].
+- `src/crypto/interfaces.py`: Interfaces abstratas (IKeyEncapsulation, IDigitalSignature)
+- `src/crypto/kem/kyber.py`: KEM wrapper (Kyber512 via liboqs)
+- `src/crypto/signatures/dilithium.py`: Signature wrapper (ML-DSA-44 via liboqs)
+- `src/crypto/classical/rsa.py`: Classical signature wrapper (RSA-2048 via cryptography)
+- `src/auth/`: Service layer — classical_service.py, pqc_service.py, hybrid_service.py
+- `src/api/`: Endpoints FastAPI (routes.py, auth_routes.py, pqc_auth_routes.py, hybrid_auth_routes.py)
+- `src/db/`: SQLite database layer (database.py, repository.py, models.py)
+- `benchmark/`: Runner, analysis, charts, throughput, metrics
+- `results/`: CSVs e PNGs gerados pelo benchmark
 
 ## Regras de Implementação
-1. [cite_start]**NÃO implemente criptografia do zero.** Use sempre a liboqs[cite: 336].
-2. [cite_start]**Foco em Benchmarking:** Sempre que criar lógica nova, considere como medir latência (time.perf_counter) e memória (psutil) [cite: 13, 318-319].
-3. [cite_start]**Código Limpo:** Use tipagem estática (Type Hints) e Pydantic para schemas de API[cite: 51, 58].
-4. **Performance:** Evite otimizações prematuras. [cite_start]O objetivo é viabilidade prática, não performance máxima[cite: 336].
+1. **NÃO implemente criptografia do zero.** Use sempre liboqs para PQC e `cryptography` para clássico.
+2. **Foco em Benchmarking:** Medir latência com `time.perf_counter()` e memória com `tracemalloc` (em passes separados).
+3. **Código Limpo:** Use tipagem estática (Type Hints) e Pydantic para schemas de API.
+4. **Performance:** Evite otimizações prematuras. O objetivo é viabilidade prática, não performance máxima.
+5. **oqs** só é importado em `kyber.py` e `dilithium.py`. Service/API dependem de interfaces abstratas.
 
-## Metas Atuais
-- [cite_start]Fase 1: Setup e Prototipagem com liboqs[cite: 114].
-- [cite_start]Fase 2: Baseline com Autenticação Clássica[cite: 135].
-- [cite_start]Fase 3 & 4: Implementação Pura PQC e Modo Híbrido[cite: 149, 156].
+## Status do Projeto
+Todas as 5 fases estão completas:
+- Fase 1: Setup e prototipagem com liboqs
+- Fase 2: Baseline clássico (RSA-2048 + JWT RS256)
+- Fase 3: PQC puro (ML-DSA-44 + Kyber512)
+- Fase 4: Modo híbrido (clássico + PQC)
+- Fase 5: Benchmarking formal (N=100, CSV, gráficos)

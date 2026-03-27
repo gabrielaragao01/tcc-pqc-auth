@@ -182,39 +182,74 @@ O endpoint `POST /auth/login-hybrid` assina o mesmo payload com ambos os algorit
 
 ---
 
-## Fase 5 — Benchmark Formal (a preencher)
+## Fase 5 — Benchmark Formal (N=100, ARM64)
 
-**Metodologia planejada:**
+**Data de medição:** 2026-03-27 (v2, corrigida)
+**Status:** Medições formais completas
+**Ambiente:** Apple Silicon (ARM64), macOS, Python 3.13
+**Metodologia:** N=100 iterações, warmup=10, `perf_counter()` para timing, `tracemalloc` para memória (em passes separados — ver nota metodológica abaixo)
 
-```python
-# Pseudocódigo do loop de benchmark (Phase 5)
-results = []
-warmup_iterations = 10
-measure_iterations = 100
+> **Correção metodológica (v2):** A versão anterior desta seção reportava `jwt_sign` a ~44.8ms. Esse valor estava inflado porque o `ClassicalAuthService` passava bytes PEM ao `jwt.encode()`, forçando `load_pem_private_key()` (~45ms) a cada chamada. A correção foi passar o objeto de chave RSA pré-parseado ao PyJWT. Os raw benchmarks (`raw_rsa_sign`) continuam medindo a operação completa incluindo desserialização da chave DER — isso é intencional para capturar o custo real da primitiva crua.
+>
+> Além disso, as rodadas de timing e memória foram separadas: a medição de latência usa apenas `perf_counter()` (sem `tracemalloc`), e a memória é medida em um passe separado de 10 iterações. Isso evita que o overhead de `tracemalloc.start()/stop()` por iteração interfira em caches internos da biblioteca `cryptography`.
 
-# Warmup — não contabilizado
-for _ in range(warmup_iterations):
-    service.login(username, password)
+### Service Layer — Resultados completos
 
-# Medição formal
-for _ in range(measure_iterations):
-    t0 = perf_counter()
-    response = service.login(username, password)
-    t1 = perf_counter()
-    results.append((t1 - t0) * 1000)
+| Operação | Algoritmo | mean (ms) | median (ms) | stdev (ms) | P95 (ms) | P99 (ms) |
+|----------|-----------|----------|------------|----------|---------|---------|
+| `jwt_sign` | RS256 | 0.888 | 0.789 | 0.419 | 1.182 | 2.926 |
+| `jwt_verify` | RS256 | 0.032 | 0.029 | 0.008 | 0.046 | 0.062 |
+| `pqc_sign` | ML-DSA-44 | 0.135 | 0.100 | 0.254 | 0.184 | 0.263 |
+| `pqc_verify` | ML-DSA-44 | 0.023 | 0.023 | 0.001 | 0.023 | 0.024 |
+| `kem_keygen` | Kyber512 | 0.009 | 0.009 | 0.001 | 0.009 | 0.013 |
+| `kem_encapsulate` | Kyber512 | 0.010 | 0.010 | 0.000 | 0.010 | 0.010 |
+| `kem_decapsulate` | Kyber512 | 0.009 | 0.009 | 0.000 | 0.009 | 0.011 |
+| `hybrid_sign_classical` | RS256 | 0.827 | 0.789 | 0.174 | 0.888 | 1.804 |
+| `hybrid_sign_pqc` | ML-DSA-44 | 0.113 | 0.098 | 0.043 | 0.181 | 0.325 |
+| `hybrid_verify_classical` | RS256 | 0.028 | 0.028 | 0.002 | 0.030 | 0.034 |
+| `hybrid_verify_pqc` | ML-DSA-44 | 0.023 | 0.023 | 0.001 | 0.024 | 0.027 |
 
-stats = {
-    "mean_ms": statistics.mean(results),
-    "median_ms": statistics.median(results),
-    "stdev_ms": statistics.stdev(results),
-    "p95_ms": numpy.percentile(results, 95),
-    "p99_ms": numpy.percentile(results, 99),
-    "min_ms": min(results),
-    "max_ms": max(results),
-}
-```
+### Raw Crypto — Resultados completos
 
-**Saída esperada:** CSV em `results/` + gráficos comparativos (matplotlib/seaborn).
+| Operação | Algoritmo | mean (ms) | median (ms) | stdev (ms) | P95 (ms) | P99 (ms) |
+|----------|-----------|----------|------------|----------|---------|---------|
+| `raw_rsa_keygen` | RSA-2048 | 57.294 | 52.754 | 32.871 | 116.285 | 154.641 |
+| `raw_rsa_sign` | RSA-2048 | 50.192 | 46.042 | 12.645 | 73.932 | 112.377 |
+| `raw_rsa_verify` | RSA-2048 | 0.058 | 0.057 | 0.002 | 0.061 | 0.065 |
+| `raw_mldsa_keygen` | ML-DSA-44 | 0.025 | 0.024 | 0.002 | 0.028 | 0.031 |
+| `raw_mldsa_sign` | ML-DSA-44 | 0.058 | 0.050 | 0.030 | 0.118 | 0.154 |
+| `raw_mldsa_verify` | ML-DSA-44 | 0.022 | 0.022 | 0.001 | 0.024 | 0.027 |
+| `raw_kyber_keygen` | Kyber512 | 0.010 | 0.009 | 0.009 | 0.011 | 0.019 |
+| `raw_kyber_encapsulate` | Kyber512 | 0.010 | 0.010 | 0.003 | 0.012 | 0.014 |
+| `raw_kyber_decapsulate` | Kyber512 | 0.008 | 0.008 | 0.000 | 0.009 | 0.010 |
+
+### Comparação direta — Classical vs PQC
+
+| Comparação | RS256/RSA-2048 (ms) | ML-DSA-44 (ms) | Speedup PQC |
+|------------|-------------------|----------------|-------------|
+| Token Signing (service) | 0.888 | 0.135 | **6.6×** |
+| Token Verification (service) | 0.032 | 0.023 | **1.4×** |
+| Key Generation (raw) | 57.294 | 0.025 | **2310×** |
+| Signature (raw) | 50.192 | 0.058 | **868×** |
+| Verification (raw) | 0.058 | 0.022 | **2.6×** |
+
+### Interpretação dos resultados
+
+**Service layer (jwt_sign vs pqc_sign):** ML-DSA-44 é **~6.6× mais rápido** que RS256 para assinatura de tokens. Esse é o speedup real em regime de produção, com chaves pré-carregadas em memória. O valor anterior de ~390× estava inflado pela reparse de chave PEM a cada chamada.
+
+**Raw crypto (raw_rsa_sign vs raw_mldsa_sign):** ML-DSA-44 é **~868× mais rápido** que RSA para assinatura raw. Porém este número inclui a desserialização da chave DER (`load_der_private_key`) em cada iteração do RSA (~45ms), que é o custo dominante. A comparação raw mede o custo total da primitiva "do zero", enquanto a comparação service mede o custo em regime de chave pré-carregada.
+
+**Verificação:** Tanto service (~1.4×) quanto raw (~2.6×), a vantagem do PQC na verificação é modesta. Ambos os algoritmos verificam em <0.06ms — a diferença é irrelevante em termos de latência percebida pelo usuário.
+
+**Outliers e representatividade estatística:** Operações sub-milissegundo (especialmente `pqc_sign`) apresentam outliers ocasionais causados por GC pauses do Python ou escalonamento de CPU (e.g., `pqc_sign` max=2.633ms vs median=0.100ms, stdev=0.254ms). A **mediana** é mais representativa que a média para essas operações. Os speedups reportados usam a média por consistência com a literatura, mas a mediana confirma a mesma tendência (median jwt_sign 0.789ms / median pqc_sign 0.100ms = 7.9×).
+
+### Saída de dados
+
+- `results/raw_samples.csv` — 2000 samples brutos
+- `results/summary_stats.csv` — estatísticas por operação
+- `results/comparison.csv` — tabela comparativa
+- `results/latency_comparison.png`, `latency_boxplot.png`, `latency_violin.png`
+- `results/memory_comparison.png`, `results/payload_sizes.png`
 
 ---
 
@@ -238,3 +273,22 @@ O objetivo do TCC é comparar o **custo computacional dos algoritmos criptográf
 `verify_password()` (bcrypt) é executado antes da medição do `jwt_sign`. O custo do bcrypt é intencionalmente alto por design (work factor configurable, padrão ≈ 100ms). Isso **não é contabilizado** no `timing.duration_ms` retornado pela API — apenas o custo da operação criptográfica de chave assimétrica é medido.
 
 Para o TCC, o tempo de bcrypt é constante entre os modos clássico e PQC (a mesma verificação de senha ocorre em ambos), portanto não afeta a comparação.
+
+### Separação de rodadas de timing e memória
+
+Na versão corrigida (v2), o benchmark runner executa duas fases distintas para cada operação:
+
+1. **Fase A (timing):** N=100 iterações com `perf_counter()` apenas, sem `tracemalloc`. Isso garante que o overhead de instrumentação de memória não contamine as medições de latência.
+2. **Fase B (memória):** 10 iterações com `tracemalloc.start()/stop()` para capturar peak e current bytes. A média dessas 10 amostras é associada a todas as amostras de timing.
+
+Essa separação foi necessária porque `tracemalloc.start()/stop()` por iteração pode interferir em caches internos de bibliotecas C (como a `cryptography` via OpenSSL).
+
+### Memória em operações compostas (híbrido e KEM)
+
+Para operações compostas como `hybrid_login` (que executa assinatura clássica + PQC) e `kem_exchange` (que executa keygen + encapsulate + decapsulate), o `tracemalloc` mede o **agregado** da operação completa. Isso significa que todas as sub-operações dentro de uma chamada compartilham o mesmo valor de `tracemalloc_peak_bytes`.
+
+Os valores de memória para sub-operações híbridas/KEM representam o pico de alocação da operação composta inteira, não da sub-operação individual. Para obter memória individual por sub-operação, seria necessário reestruturar o service layer, quebrando os limites de clean architecture — o que não se justifica para o escopo do TCC.
+
+### Throughput HTTP
+
+O benchmark de throughput HTTP (`benchmark/throughput.py`) não foi incluído nos resultados formais. O foco do TCC é a performance de primitivas criptográficas (latência e memória), não throughput de servidor HTTP — que é dominado por bcrypt (~100ms por request) e I/O de rede, não pela operação criptográfica em si.

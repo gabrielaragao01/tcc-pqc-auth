@@ -769,12 +769,173 @@ Endpoints híbridos:  POST /auth/login-hybrid, /verify-hybrid ✅
 ### Próximos passos (Fase 5)
 
 - **Fase 5:** Benchmarking formal e análise de performance
-  - Loop de N=100 iterações com warmup=10 para cada operação (jwt_sign, jwt_verify, pqc_sign, pqc_verify, kem_*)
-  - Cálculo de média, mediana, desvio padrão, P95, P99
-  - Exportação para CSV em `results/`
-  - Gráficos comparativos (matplotlib/seaborn): barras, box plots, violin plots
-  - Medição de memória com `psutil` (RSS antes/depois de cada operação)
-  - Análise qualitativa: tamanho de token, tamanho de chave, compatibilidade
+
+---
+
+## Semana 6 (2026-03-27)
+
+### Fase 5 — Benchmarking Formal e Análise de Performance
+
+#### O que foi implementado
+
+A Fase 5 é o **core do TCC**: coleta formal de dados com N=100 iterações, medição de memória (`tracemalloc` + `psutil`), exportação CSV e gráficos comparativos.
+
+**Arquivos criados:**
+
+```
+benchmark/
+  __init__.py
+  __main__.py              ← permite `python -m benchmark.runner`
+  runner.py                ← runner principal: warmup, N=100, coleta timing + memória
+  metrics.py               ← BenchmarkSample dataclass, detect_environment()
+  analysis.py              ← estatísticas: mean, median, stdev, P95, P99 + export CSV
+  charts.py                ← gráficos: bar, box, violin plots (matplotlib/seaborn)
+  throughput.py             ← teste de throughput HTTP via httpx
+results/
+  raw_samples.csv           ← 2000 samples brutos (20 operações × 100 iterações)
+  summary_stats.csv         ← estatísticas agregadas (1 linha por operação)
+  comparison.csv            ← tabela comparativa clássico vs PQC
+  latency_comparison.png    ← bar chart: jwt_sign vs pqc_sign, jwt_verify vs pqc_verify
+  latency_boxplot.png       ← box plot: distribuição de latência (service layer)
+  latency_violin.png        ← violin plot: distribuição de latência (raw crypto)
+  memory_comparison.png     ← bar chart: tracemalloc peak bytes por operação
+  payload_sizes.png         ← bar chart horizontal: tamanho de tokens/chaves/assinaturas
+scripts/
+  run_benchmarks.sh         ← script completo: runner → analysis → charts
+```
+
+**Arquivos modificados:**
+- `requirements.txt` → adicionados `psutil`, `pandas`, `matplotlib`, `seaborn`, `numpy`
+- `src/config.py` → adicionado `benchmark_warmup: int = 10`
+- `.env` → adicionado `BENCHMARK_WARMUP=10`
+- `Dockerfile` → agora compila liboqs do fonte (para PQC funcionar dentro do container)
+- `docker-compose.yml` → adicionado serviço `benchmark` com profile
+- `main.py` → versão `0.5.0`, mensagem "Phase 5 active"
+
+**Suite de testes:** 53 testes, 0 falhas (nenhuma regressão).
+
+---
+
+#### Metodologia de benchmarking
+
+**Duas camadas de medição:**
+
+| Camada | O que mede | Por que |
+|--------|-----------|---------|
+| **RAW** | Operações criptográficas puras (sign, verify, keygen, KEM) via interfaces `IDigitalSignature`/`IKeyEncapsulation` | Isola o custo do **algoritmo**, sem bcrypt, sem JWT encode, sem base64url |
+| **SERVICE** | Operações completas via `ClassicalAuthService`, `PQCLoginService`, `HybridAuthService` | Mede o custo **real em contexto de autenticação** (inclui token encoding, mas timing interno ainda exclui bcrypt) |
+
+**20 operações medidas:** 9 raw (RSA keygen/sign/verify, ML-DSA keygen/sign/verify, Kyber keygen/encap/decap) + 11 service (jwt_sign/verify, pqc_sign/verify, kem_keygen/encap/decap, hybrid_sign_classical/pqc, hybrid_verify_classical/pqc).
+
+**Protocolo:**
+1. Warmup: 10 iterações descartadas (estabiliza cache da CPU e lazy loading de libs)
+2. Medição: 100 iterações com coleta de `duration_ms` (via `perf_counter()`) + `tracemalloc` (peak bytes por operação)
+3. RSS global: `psutil.Process().memory_info().rss` antes/depois do bloco de 100 iterações (contexto)
+4. Exportação: CSV bruto → estatísticas → gráficos
+
+> **Correção v2 (2026-03-27):** O protocolo acima descreve a versão original (v1). Na versão corrigida, as rodadas de timing e memória foram **separadas**: Fase A mede timing com `perf_counter()` apenas (sem `tracemalloc`), Fase B mede memória com `tracemalloc` em 10 iterações separadas. Além disso, o `ClassicalAuthService` foi corrigido para passar o key object RSA pré-parseado ao PyJWT, eliminando o custo de `load_pem_private_key()` (~45ms) por chamada. Ver [`docs/benchmarks.md`](benchmarks.md) Fase 5 para os dados oficiais corrigidos.
+
+---
+
+#### Decisão — tracemalloc como fonte primária de memória
+
+Para operações sub-milissegundo (~0.02ms como `pqc_verify`), o RSS do processo (psutil) atualiza em páginas de 4–64KB — granularidade insuficiente para medir uma operação individual. `tracemalloc` mede alocações Python heap por operação, com precisão de bytes.
+
+Estratégia adotada:
+- **tracemalloc**: fonte primária, mede cada operação individualmente
+- **psutil RSS**: contexto, medido uma vez por bloco de N=100 iterações
+
+---
+
+#### Decisão — Plataforma ARM64 como principal
+
+O benchmark roda em Apple Silicon (ARM64) com extensões NEON/ASIMD que favorecem operações vetoriais de lattice. Docker x86_64 no Mac usa QEMU (3–5× overhead de emulação), então não serve como dado representativo de x86 real.
+
+**Para o TCC:** ARM64 nativo é a plataforma principal. Validação em x86 real (EC2/VPS) fica como trabalho futuro. O relatório documenta o hardware explicitamente.
+
+---
+
+#### Resultados formais (N=100, ARM64, warm)
+
+> **Correção v2:** Os valores de `jwt_sign` abaixo (~44.8ms, speedup ~390×) estavam inflados. A causa era que `jwt.encode()` recebia bytes PEM e chamava `load_pem_private_key()` internamente a cada invocação (~45ms). Corrigido passando o key object pré-parseado. **Valores corrigidos: jwt_sign ~0.89ms, speedup ~6.6×.** Ver [`docs/benchmarks.md`](benchmarks.md) para os dados oficiais. Os valores raw (`raw_rsa_sign` ~44-50ms) permanecem corretos — incluem intencionalmente a desserialização da chave DER.
+
+##### Service Layer — Comparação direta (v1 — ver nota acima)
+
+| Comparação | RS256 (ms) | ML-DSA-44 (ms) | Speedup |
+|------------|-----------|----------------|---------|
+| **Token Signing** | 44.826 | 0.115 | **390×** |
+| **Token Verification** | 0.087 | 0.042 | **2.1×** |
+
+##### Raw Crypto — Comparação direta
+
+| Comparação | RSA-2048 (ms) | ML-DSA-44 (ms) | Speedup |
+|------------|--------------|----------------|---------|
+| **Key Generation** | 55.312 | 0.043 | **1292×** |
+| **Signature** | 44.690 | 0.076 | **590×** |
+| **Verification** | 0.061 | 0.040 | **1.5×** |
+
+##### Kyber512 KEM (service layer)
+
+| Operação | mean (ms) | median (ms) | P95 (ms) |
+|----------|----------|------------|----------|
+| kem_keygen | 0.029 | 0.028 | 0.030 |
+| kem_encapsulate | 0.028 | 0.028 | 0.030 |
+| kem_decapsulate | 0.030 | 0.028 | 0.030 |
+
+---
+
+#### Análise dos resultados — surpresas e trade-offs
+
+> **Correção v2:** A análise abaixo reflete os dados v1. Com a correção, o speedup de signing no service layer é **~6.6×** (não ~390×). A vantagem estrutural do lattice math permanece válida, mas a magnitude era inflada pelo custo de re-parse da chave PEM (~45ms por chamada). Os speedups raw (~868× para sign) permanecem altos porque medem a primitiva completa incluindo desserialização de chave. A mediana é mais representativa que a média para operações sub-milissegundo devido a outliers ocasionais de GC/escalonamento (e.g., `pqc_sign` max=2.63ms vs median=0.10ms).
+
+**1. ML-DSA-44 é dramaticamente mais rápido que RSA-2048 em sign (~390× v1 → ~6.6× v2 corrigido)**
+
+Resultado surpreendente e **contrário à expectativa comum** de que PQC seria mais lento. A razão:
+- **RSA sign** usa exponenciação modular com expoente privado `d` de 2048 bits — operação inerentemente lenta ($O(n^3)$ em aritmética de precisão arbitrária)
+- **ML-DSA-44 sign** usa multiplicação de polinômios em $\mathbb{Z}_q[x]/(x^n + 1)$ com NTT (Number Theoretic Transform) — operação $O(n \log n)$ altamente paralelizável pelas extensões NEON do ARM64
+
+A vantagem é **estrutural**: lattice math é mais eficiente em CPUs modernas, não apenas "mais rápida por acaso".
+
+**2. A verificação é mais equilibrada (RSA ~2× mais lento que ML-DSA)**
+
+RSA verify usa expoente público `e=65537` (pequeno), então é intrinsecamente rápida. ML-DSA verify também é rápida. A diferença é menor.
+
+**3. O trade-off real é tamanho, não velocidade**
+
+| Artefato | RSA-2048 | ML-DSA-44 | Fator |
+|----------|---------|-----------|-------|
+| Token completo | ~200 bytes | ~3343 bytes | 16.7× |
+| Assinatura raw | 256 bytes | 2420 bytes | 9.5× |
+| Chave pública | 256 bytes | 1312 bytes | 5.1× |
+
+Para web auth, isso significa: header `Authorization` de ~3.3 KB vs ~200 bytes. Em APIs com muitas chamadas, o overhead de rede pode ser significativo.
+
+**4. Keygen RSA é extremamente lento (~55ms) vs ML-DSA (~0.04ms)**
+
+RSA keygen envolve encontrar dois primos grandes (teste de primalidade é probabilístico e custoso). ML-DSA keygen é determinístico com custo fixo baixo. Isso importa para cenários de rotação de chaves.
+
+---
+
+#### Estado atual do projeto (Fase 5 completa)
+
+```
+Python:              3.13
+liboqs (C):          0.15.0
+liboqs-python:       0.14.1
+PyJWT:               2.12.1
+cryptography:        46.0.5
+bcrypt:              5.0.0
+psutil:              6.1.0
+pandas:              2.3.0
+matplotlib:          3.10.3
+seaborn:             0.13.2
+KEM ativo:           Kyber512 (equiv. FIPS: ML-KEM-512)
+Sig PQC ativo:       ML-DSA-44 (FIPS 204)
+Sig clássica:        RSA-2048 / RS256
+Banco:               SQLite via data/pqc_auth.db
+Testes:              53 passed
+Benchmark:           2000 samples, 20 operações, 5 gráficos ✅
+```
 
 ---
 
