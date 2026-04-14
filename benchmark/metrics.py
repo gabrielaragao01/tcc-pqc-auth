@@ -19,6 +19,7 @@ class BenchmarkSample:
     payload_size_bytes: int | None
     timestamp: str
     environment: str
+    run_id: int = 1
 
 
 def detect_environment() -> str:

@@ -1,17 +1,20 @@
 """Generate benchmark visualization charts from raw_samples.csv.
 
 Usage:
-    python -m benchmark.charts
+    python -m benchmark.charts              # single-run (existing behavior)
+    python -m benchmark.charts --multi-run  # multi-run charts from results/runs/
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
 
@@ -24,6 +27,9 @@ FIGSIZE = (12, 6)
 
 # Consistent color palette for algorithms
 PALETTE = {"RS256": "#2196F3", "RSA-2048": "#2196F3", "ML-DSA-44": "#4CAF50", "Kyber512": "#FF9800"}
+
+# Color palette for run IDs
+RUN_PALETTE = {1: "#1976D2", 2: "#388E3C", 3: "#F57C00", 4: "#7B1FA2", 5: "#C62828"}
 
 
 def _load_data() -> pd.DataFrame:
@@ -153,17 +159,137 @@ def chart_payload_sizes(df: pd.DataFrame) -> None:
     _save(fig, "payload_sizes.png")
 
 
+# ---------------------------------------------------------------------------
+# Multi-run charts
+# ---------------------------------------------------------------------------
+
+def _save_multi(fig: plt.Figure, name: str) -> None:
+    """Save chart to results/multi_run/."""
+    path = RESULTS_DIR / "multi_run" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    log.info("Saved %s", path)
+
+
+def chart_inter_run_boxplot(df: pd.DataFrame) -> None:
+    """Box plot: latency distribution per run_id for service-layer operations."""
+    ops = ["jwt_sign", "pqc_sign", "jwt_verify", "pqc_verify",
+           "kem_keygen", "kem_encapsulate", "kem_decapsulate"]
+    subset = df[df["operation"].isin(ops)].copy()
+    if subset.empty:
+        return
+
+    subset["run_id"] = subset["run_id"].astype(str)
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    sns.boxplot(data=subset, x="operation", y="duration_ms", hue="run_id",
+                palette=[RUN_PALETTE.get(i, "#999") for i in sorted(df["run_id"].unique())],
+                ax=ax)
+    ax.set_yscale("log")
+    ax.set_xlabel("Operation")
+    ax.set_ylabel("Latency (ms, log scale)")
+    ax.set_title("Inter-Run Reproducibility: Latency Distribution per Run")
+    ax.legend(title="Run")
+    plt.xticks(rotation=30, ha="right")
+    _save_multi(fig, "inter_run_boxplot.png")
+
+
+def chart_inter_run_cv(inter_stats_df: pd.DataFrame) -> None:
+    """Horizontal bar chart of CV% per operation — the key reproducibility metric."""
+    data = inter_stats_df.sort_values("inter_run_cv_pct", ascending=True).copy()
+
+    # Color by CV threshold
+    colors = []
+    for cv in data["inter_run_cv_pct"]:
+        if cv < 5:
+            colors.append("#4CAF50")  # green — excellent
+        elif cv < 10:
+            colors.append("#FF9800")  # yellow — acceptable
+        else:
+            colors.append("#F44336")  # red — investigate
+
+    fig, ax = plt.subplots(figsize=(10, max(6, len(data) * 0.45)))
+    bars = ax.barh(data["operation"] + " (" + data["algorithm"] + ")",
+                   data["inter_run_cv_pct"], color=colors)
+    ax.set_xlabel("Coefficient of Variation (%)")
+    ax.set_title("Inter-Run Reproducibility (CV%): lower is better")
+
+    # Threshold lines
+    ax.axvline(x=5, color="#4CAF50", linestyle="--", alpha=0.5, label="CV < 5% (excellent)")
+    ax.axvline(x=10, color="#FF9800", linestyle="--", alpha=0.5, label="CV < 10% (acceptable)")
+    ax.legend(loc="lower right")
+
+    # Value labels
+    for bar, cv in zip(bars, data["inter_run_cv_pct"]):
+        ax.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height() / 2,
+                f"{cv:.1f}%", va="center", fontsize=9)
+
+    _save_multi(fig, "inter_run_cv.png")
+
+
+def chart_run_means_comparison(df: pd.DataFrame) -> None:
+    """Grouped bar chart: per-run means for service-layer operations."""
+    ops = ["jwt_sign", "pqc_sign", "jwt_verify", "pqc_verify"]
+    subset = df[df["operation"].isin(ops)].copy()
+    if subset.empty:
+        return
+
+    # Compute per-run means
+    per_run = subset.groupby(["run_id", "operation", "algorithm"])["duration_ms"].mean().reset_index()
+    per_run["run_id"] = per_run["run_id"].astype(str)
+
+    fig, ax = plt.subplots(figsize=FIGSIZE)
+    sns.barplot(data=per_run, x="operation", y="duration_ms", hue="run_id",
+                palette=[RUN_PALETTE.get(i, "#999") for i in sorted(df["run_id"].unique())],
+                ax=ax)
+    ax.set_yscale("log")
+    ax.set_xlabel("Operation")
+    ax.set_ylabel("Mean Latency (ms, log scale)")
+    ax.set_title("Per-Run Mean Latency Comparison")
+    ax.legend(title="Run")
+    _save_multi(fig, "run_means_comparison.png")
+
+
 def main() -> None:
-    df = _load_data()
-    log.info("Loaded %d samples for chart generation", len(df))
+    parser = argparse.ArgumentParser(description="PQC Benchmark Charts")
+    parser.add_argument("--multi-run", action="store_true",
+                        help="Generate multi-run charts from results/multi_run/")
+    args = parser.parse_args()
 
-    chart_latency_comparison(df)
-    chart_latency_boxplot(df)
-    chart_latency_violin(df)
-    chart_memory_comparison(df)
-    chart_payload_sizes(df)
+    if args.multi_run:
+        combined_path = RESULTS_DIR / "multi_run" / "combined_samples.csv"
+        inter_path = RESULTS_DIR / "multi_run" / "inter_run_stats.csv"
 
-    log.info("All charts generated in %s", RESULTS_DIR)
+        df = pd.read_csv(combined_path)
+        inter_stats = pd.read_csv(inter_path)
+        log.info("Loaded %d combined samples for multi-run charts", len(df))
+
+        # Multi-run specific charts
+        chart_inter_run_boxplot(df)
+        chart_inter_run_cv(inter_stats)
+        chart_run_means_comparison(df)
+
+        # Also regenerate standard charts with combined data
+        chart_latency_comparison(df)
+        chart_latency_boxplot(df)
+        chart_latency_violin(df)
+        chart_memory_comparison(df)
+        chart_payload_sizes(df)
+
+        log.info("All multi-run charts generated in %s/multi_run/", RESULTS_DIR)
+    else:
+        # Original single-run behavior
+        df = _load_data()
+        log.info("Loaded %d samples for chart generation", len(df))
+
+        chart_latency_comparison(df)
+        chart_latency_boxplot(df)
+        chart_latency_violin(df)
+        chart_memory_comparison(df)
+        chart_payload_sizes(df)
+
+        log.info("All charts generated in %s", RESULTS_DIR)
 
 
 if __name__ == "__main__":

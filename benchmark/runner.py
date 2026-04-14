@@ -127,7 +127,7 @@ def _measure_memory(fn, n_samples: int = 10) -> tuple[float, float]:
 # Layer 1: RAW crypto benchmarks
 # ---------------------------------------------------------------------------
 
-def _run_raw_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[BenchmarkSample]:
+def _run_raw_benchmarks(n_warmup: int, n_measure: int, env: str, run_id: int = 1) -> list[BenchmarkSample]:
     """Benchmark raw crypto operations (no service layer, no bcrypt)."""
     from src.crypto.classical.rsa import RSASignature
     from src.crypto.kem.kyber import KyberKEM
@@ -145,7 +145,7 @@ def _run_raw_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Benchma
         "raw_rsa_keygen", "RSA-2048", n_warmup, n_measure,
         fn=lambda: rsa.generate_keypair(),
         payload_fn=lambda r: len(r.public_key),
-        env=env,
+        env=env, run_id=run_id,
     ))
 
     rsa_sig = rsa.sign(message, rsa_kp.private_key)
@@ -153,13 +153,13 @@ def _run_raw_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Benchma
         "raw_rsa_sign", "RSA-2048", n_warmup, n_measure,
         fn=lambda: rsa.sign(message, rsa_kp.private_key),
         payload_fn=lambda r: len(r),
-        env=env,
+        env=env, run_id=run_id,
     ))
     all_samples.extend(_run_raw_timed(
         "raw_rsa_verify", "RSA-2048", n_warmup, n_measure,
         fn=lambda: rsa.verify(message, rsa_sig, rsa_kp.public_key),
         payload_fn=lambda _: len(rsa_sig),
-        env=env,
+        env=env, run_id=run_id,
     ))
 
     # --- ML-DSA-44 ---
@@ -170,20 +170,20 @@ def _run_raw_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Benchma
         "raw_mldsa_keygen", "ML-DSA-44", n_warmup, n_measure,
         fn=lambda: mldsa.generate_keypair(),
         payload_fn=lambda r: len(r.public_key),
-        env=env,
+        env=env, run_id=run_id,
     ))
     mldsa_sig = mldsa.sign(message, mldsa_kp.private_key)
     all_samples.extend(_run_raw_timed(
         "raw_mldsa_sign", "ML-DSA-44", n_warmup, n_measure,
         fn=lambda: mldsa.sign(message, mldsa_kp.private_key),
         payload_fn=lambda r: len(r),
-        env=env,
+        env=env, run_id=run_id,
     ))
     all_samples.extend(_run_raw_timed(
         "raw_mldsa_verify", "ML-DSA-44", n_warmup, n_measure,
         fn=lambda: mldsa.verify(message, mldsa_sig, mldsa_kp.public_key),
         payload_fn=lambda _: len(mldsa_sig),
-        env=env,
+        env=env, run_id=run_id,
     ))
 
     # --- Kyber512 ---
@@ -194,20 +194,20 @@ def _run_raw_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Benchma
         "raw_kyber_keygen", "Kyber512", n_warmup, n_measure,
         fn=lambda: kem.generate_keypair(),
         payload_fn=lambda r: len(r.public_key),
-        env=env,
+        env=env, run_id=run_id,
     ))
     kem_result = kem.encapsulate(kem_kp.public_key)
     all_samples.extend(_run_raw_timed(
         "raw_kyber_encapsulate", "Kyber512", n_warmup, n_measure,
         fn=lambda: kem.encapsulate(kem_kp.public_key),
         payload_fn=lambda r: len(r.ciphertext),
-        env=env,
+        env=env, run_id=run_id,
     ))
     all_samples.extend(_run_raw_timed(
         "raw_kyber_decapsulate", "Kyber512", n_warmup, n_measure,
         fn=lambda: kem.decapsulate(kem_result.ciphertext, kem_kp.private_key),
         payload_fn=lambda r: len(r),
-        env=env,
+        env=env, run_id=run_id,
     ))
 
     return all_samples
@@ -216,7 +216,7 @@ def _run_raw_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Benchma
 def _run_raw_timed(
     operation: str, algorithm: str,
     n_warmup: int, n_measure: int,
-    fn, payload_fn, env: str,
+    fn, payload_fn, env: str, run_id: int = 1,
 ) -> list[BenchmarkSample]:
     """Run raw crypto operation: timing via perf_counter, memory via separate tracemalloc pass."""
     log.info("  [warmup] %s: %d iterations...", operation, n_warmup)
@@ -250,6 +250,7 @@ def _run_raw_timed(
             payload_size_bytes=payload_fn(result),
             timestamp=datetime.now(timezone.utc).isoformat(),
             environment=env,
+            run_id=run_id,
         ))
 
     return samples
@@ -259,7 +260,7 @@ def _run_raw_timed(
 # Layer 2: SERVICE benchmarks
 # ---------------------------------------------------------------------------
 
-def _run_service_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[BenchmarkSample]:
+def _run_service_benchmarks(n_warmup: int, n_measure: int, env: str, run_id: int = 1) -> list[BenchmarkSample]:
     """Benchmark service-layer operations (includes bcrypt, token encoding)."""
     log.info("=== SERVICE LAYER BENCHMARKS ===")
     all_samples: list[BenchmarkSample] = []
@@ -275,6 +276,7 @@ def _run_service_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Ben
         fn=lambda: classical.login(username, password),
         timing_attr="timing",
         payload_fn=lambda r: len(r.access_token.encode()),
+        run_id=run_id,
     ))
 
     # jwt_verify
@@ -285,6 +287,7 @@ def _run_service_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Ben
         fn=lambda: classical.verify_token(classical_token),
         timing_attr="timing",
         payload_fn=lambda r: len(classical_token.encode()),
+        run_id=run_id,
     ))
 
     # --- PQC ---
@@ -297,6 +300,7 @@ def _run_service_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Ben
         fn=lambda: pqc.login(username, password),
         timing_attr="timing",
         payload_fn=lambda r: len(r.access_token.encode()),
+        run_id=run_id,
     ))
 
     # pqc_verify
@@ -307,10 +311,11 @@ def _run_service_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Ben
         fn=lambda: pqc.verify_token(pqc_token),
         timing_attr="timing",
         payload_fn=lambda r: len(pqc_token.encode()),
+        run_id=run_id,
     ))
 
     # KEM exchange (3 timings)
-    all_samples.extend(_run_kem_benchmark(pqc, n_warmup, n_measure, env))
+    all_samples.extend(_run_kem_benchmark(pqc, n_warmup, n_measure, env, run_id=run_id))
 
     # --- Hybrid ---
     log.info("Building HybridAuthService (RSA + ML-DSA-44 keygen)...")
@@ -318,12 +323,12 @@ def _run_service_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Ben
     hybrid = _build_hybrid_service()
 
     # hybrid login (dual timings)
-    all_samples.extend(_run_hybrid_login_benchmark(hybrid, username, password, n_warmup, n_measure, env))
+    all_samples.extend(_run_hybrid_login_benchmark(hybrid, username, password, n_warmup, n_measure, env, run_id=run_id))
 
     # hybrid verify (dual timings)
     hybrid_resp = hybrid.login(username, password)
     all_samples.extend(_run_hybrid_verify_benchmark(
-        hybrid, hybrid_resp.classical_token, hybrid_resp.pqc_token, n_warmup, n_measure, env
+        hybrid, hybrid_resp.classical_token, hybrid_resp.pqc_token, n_warmup, n_measure, env, run_id=run_id,
     ))
 
     return all_samples
@@ -331,7 +336,7 @@ def _run_service_benchmarks(n_warmup: int, n_measure: int, env: str) -> list[Ben
 
 def _run_service_op(
     label: str, n_warmup: int, n_measure: int, env: str,
-    fn, timing_attr: str, payload_fn,
+    fn, timing_attr: str, payload_fn, run_id: int = 1,
 ) -> list[BenchmarkSample]:
     """Run a service operation: timing from service response, memory via separate pass."""
     log.info("  [warmup] %s: %d iterations...", label, n_warmup)
@@ -364,12 +369,13 @@ def _run_service_op(
             payload_size_bytes=payload_fn(result),
             timestamp=datetime.now(timezone.utc).isoformat(),
             environment=env,
+            run_id=run_id,
         ))
 
     return samples
 
 
-def _run_kem_benchmark(pqc_service, n_warmup: int, n_measure: int, env: str) -> list[BenchmarkSample]:
+def _run_kem_benchmark(pqc_service, n_warmup: int, n_measure: int, env: str, run_id: int = 1) -> list[BenchmarkSample]:
     """Benchmark KEM exchange (3 separate timings per iteration).
 
     Note: tracemalloc measures the aggregate KEM exchange (keygen+encapsulate+decapsulate),
@@ -407,12 +413,13 @@ def _run_kem_benchmark(pqc_service, n_warmup: int, n_measure: int, env: str) -> 
                 payload_size_bytes=None,
                 timestamp=ts,
                 environment=env,
+                run_id=run_id,
             ))
 
     return samples
 
 
-def _run_hybrid_login_benchmark(hybrid, username, password, n_warmup, n_measure, env):
+def _run_hybrid_login_benchmark(hybrid, username, password, n_warmup, n_measure, env, run_id=1):
     """Benchmark hybrid login (2 timings per iteration).
 
     Note: tracemalloc measures the aggregate hybrid login (classical+PQC signing),
@@ -444,7 +451,7 @@ def _run_hybrid_login_benchmark(hybrid, username, password, n_warmup, n_measure,
             duration_ms=result.timing_classical.duration_ms,
             tracemalloc_peak_bytes=avg_peak, tracemalloc_current_bytes=avg_current,
             payload_size_bytes=len(result.classical_token.encode()),
-            timestamp=ts, environment=env,
+            timestamp=ts, environment=env, run_id=run_id,
         ))
         samples.append(BenchmarkSample(
             iteration=i, operation="hybrid_sign_pqc",
@@ -452,13 +459,13 @@ def _run_hybrid_login_benchmark(hybrid, username, password, n_warmup, n_measure,
             duration_ms=result.timing_pqc.duration_ms,
             tracemalloc_peak_bytes=avg_peak, tracemalloc_current_bytes=avg_current,
             payload_size_bytes=len(result.pqc_token.encode()),
-            timestamp=ts, environment=env,
+            timestamp=ts, environment=env, run_id=run_id,
         ))
 
     return samples
 
 
-def _run_hybrid_verify_benchmark(hybrid, classical_token, pqc_token, n_warmup, n_measure, env):
+def _run_hybrid_verify_benchmark(hybrid, classical_token, pqc_token, n_warmup, n_measure, env, run_id=1):
     """Benchmark hybrid verify (2 timings per iteration).
 
     Note: tracemalloc measures the aggregate hybrid verify (classical+PQC verification),
@@ -492,7 +499,7 @@ def _run_hybrid_verify_benchmark(hybrid, classical_token, pqc_token, n_warmup, n
             duration_ms=result.timing_classical.duration_ms,
             tracemalloc_peak_bytes=avg_peak, tracemalloc_current_bytes=avg_current,
             payload_size_bytes=len(classical_token.encode()),
-            timestamp=ts, environment=env,
+            timestamp=ts, environment=env, run_id=run_id,
         ))
         samples.append(BenchmarkSample(
             iteration=i, operation="hybrid_verify_pqc",
@@ -500,7 +507,7 @@ def _run_hybrid_verify_benchmark(hybrid, classical_token, pqc_token, n_warmup, n
             duration_ms=result.timing_pqc.duration_ms,
             tracemalloc_peak_bytes=avg_peak, tracemalloc_current_bytes=avg_current,
             payload_size_bytes=len(pqc_token.encode()),
-            timestamp=ts, environment=env,
+            timestamp=ts, environment=env, run_id=run_id,
         ))
 
     return samples
@@ -529,14 +536,17 @@ def _export_csv(samples: list[BenchmarkSample], filepath: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="PQC Benchmark Runner")
     parser.add_argument("--environment", default=None, help="Override environment label")
+    parser.add_argument("--run-id", type=int, default=None,
+                        help="Run identifier (1, 2, 3, ...). Saves to results/runs/run_N/")
     args = parser.parse_args()
 
     from src.config import settings
     n_warmup = settings.benchmark_warmup
     n_measure = settings.benchmark_iterations
     env = args.environment or detect_environment()
+    run_id = args.run_id or 1
 
-    log.info("Benchmark config: N=%d, warmup=%d, environment=%s", n_measure, n_warmup, env)
+    log.info("Benchmark config: N=%d, warmup=%d, environment=%s, run_id=%d", n_measure, n_warmup, env, run_id)
 
     # Setup in-memory DB and test user
     conn = _setup_memory_db()
@@ -545,10 +555,10 @@ def main() -> None:
     t_start = time.perf_counter()
 
     # Layer 1: Raw crypto
-    raw_samples = _run_raw_benchmarks(n_warmup, n_measure, env)
+    raw_samples = _run_raw_benchmarks(n_warmup, n_measure, env, run_id=run_id)
 
     # Layer 2: Service layer
-    service_samples = _run_service_benchmarks(n_warmup, n_measure, env)
+    service_samples = _run_service_benchmarks(n_warmup, n_measure, env, run_id=run_id)
 
     all_samples = raw_samples + service_samples
     t_end = time.perf_counter()
@@ -556,8 +566,12 @@ def main() -> None:
     log.info("Total benchmark time: %.1f seconds", t_end - t_start)
     log.info("Total samples collected: %d", len(all_samples))
 
-    # Export
-    _export_csv(all_samples, RESULTS_DIR / "raw_samples.csv")
+    # Export — per-run directory when --run-id is set, otherwise default location
+    if args.run_id is not None:
+        output_dir = RESULTS_DIR / "runs" / f"run_{run_id}"
+    else:
+        output_dir = RESULTS_DIR
+    _export_csv(all_samples, output_dir / "raw_samples.csv")
 
     # Unique operations summary
     ops = sorted(set(s.operation for s in all_samples))

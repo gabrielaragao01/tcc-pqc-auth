@@ -167,7 +167,17 @@ Raw data + charts: `results/` directory.
 # Full benchmark pipeline (local, ~2 min)
 ./scripts/run_benchmarks.sh
 
-# Or step by step:
+# Multi-run benchmark (3 runs for reproducibility, ~8 min)
+./scripts/run_benchmarks.sh --multi-run
+
+# Or step by step (multi-run):
+python -m benchmark.runner --run-id 1
+python -m benchmark.runner --run-id 2
+python -m benchmark.runner --run-id 3
+python -m benchmark.analysis --multi-run
+python -m benchmark.charts --multi-run
+
+# Or step by step (single run):
 python -m benchmark.runner --environment arm64-macos
 python -m benchmark.analysis
 python -m benchmark.charts

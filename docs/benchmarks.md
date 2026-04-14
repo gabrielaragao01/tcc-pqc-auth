@@ -185,7 +185,7 @@ O endpoint `POST /auth/login-hybrid` assina o mesmo payload com ambos os algorit
 ## Fase 5 — Benchmark Formal (N=100, ARM64)
 
 **Data de medição:** 2026-03-27 (v2, corrigida)
-**Status:** Medições formais completas
+**Status:** Supersedido pela Fase 5b (multi-run, 2026-04-12) — os dados oficiais do TCC estão na seção "Fase 5b — Reprodutibilidade" abaixo. Esta seção é mantida como referência histórica da primeira execução.
 **Ambiente:** Apple Silicon (ARM64), macOS, Python 3.13
 **Metodologia:** N=100 iterações, warmup=10, `perf_counter()` para timing, `tracemalloc` para memória (em passes separados — ver nota metodológica abaixo)
 
@@ -292,3 +292,74 @@ Os valores de memória para sub-operações híbridas/KEM representam o pico de 
 ### Throughput HTTP
 
 O benchmark de throughput HTTP (`benchmark/throughput.py`) não foi incluído nos resultados formais. O foco do TCC é a performance de primitivas criptográficas (latência e memória), não throughput de servidor HTTP — que é dominado por bcrypt (~100ms por request) e I/O de rede, não pela operação criptográfica em si.
+
+---
+
+## Fase 5b — Reprodutibilidade (3 execuções independentes, ARM64)
+
+**Data de medição:** 2026-04-12
+**Status:** 3 execuções completas para validação de reprodutibilidade
+**Metodologia:** 3 execuções independentes do benchmark completo (N=100, warmup=10 cada), com 30s de cooldown entre runs para evitar thermal throttling. Total: 6000 amostras brutas.
+
+### Variância Inter-Run — Service Layer
+
+| Operação | Algoritmo | Grand Mean (ms) | Inter-Run StDev (ms) | CV (%) | Reprodutível? |
+|----------|-----------|-----------------|---------------------|--------|---------------|
+| `jwt_sign` | RS256 | 1.629 | 0.072 | 4.42% | Sim |
+| `jwt_verify` | RS256 | 0.058 | 0.005 | 9.01% | Sim |
+| `pqc_sign` | ML-DSA-44 | 0.203 | 0.025 | 12.41% | Marginal (ver nota) |
+| `pqc_verify` | ML-DSA-44 | 0.044 | 0.001 | 1.34% | Sim |
+| `kem_keygen` | Kyber512 | 0.017 | 0.000 | 0.33% | Sim |
+| `kem_encapsulate` | Kyber512 | 0.019 | 0.000 | 0.98% | Sim |
+| `kem_decapsulate` | Kyber512 | 0.017 | 0.000 | 0.90% | Sim |
+| `hybrid_sign_classical` | RS256 | 1.686 | 0.105 | 6.24% | Sim |
+| `hybrid_sign_pqc` | ML-DSA-44 | 0.204 | 0.017 | 8.41% | Sim |
+| `hybrid_verify_classical` | RS256 | 0.056 | 0.001 | 0.92% | Sim |
+| `hybrid_verify_pqc` | ML-DSA-44 | 0.046 | 0.000 | 0.67% | Sim |
+
+### Variância Inter-Run — Raw Crypto
+
+| Operação | Algoritmo | Grand Mean (ms) | Inter-Run StDev (ms) | CV (%) | Reprodutível? |
+|----------|-----------|-----------------|---------------------|--------|---------------|
+| `raw_rsa_keygen` | RSA-2048 | 108.333 | 3.955 | 3.65% | Sim |
+| `raw_rsa_sign` | RSA-2048 | 89.323 | 0.860 | 0.96% | Sim |
+| `raw_rsa_verify` | RSA-2048 | 0.113 | 0.002 | 2.15% | Sim |
+| `raw_mldsa_keygen` | ML-DSA-44 | 0.049 | 0.003 | 5.48% | Sim |
+| `raw_mldsa_sign` | ML-DSA-44 | 0.106 | 0.005 | 4.63% | Sim |
+| `raw_mldsa_verify` | ML-DSA-44 | 0.044 | 0.001 | 1.60% | Sim |
+| `raw_kyber_keygen` | Kyber512 | 0.018 | 0.000 | 2.23% | Sim |
+| `raw_kyber_encapsulate` | Kyber512 | 0.018 | 0.000 | 1.55% | Sim |
+| `raw_kyber_decapsulate` | Kyber512 | 0.016 | 0.000 | 0.79% | Sim |
+
+### Comparação Classical vs PQC (Grand Means, 3 runs)
+
+| Comparação | RS256/RSA-2048 (ms) | ML-DSA-44 (ms) | Speedup PQC |
+|------------|-------------------|----------------|-------------|
+| Token Signing (service) | 1.629 | 0.203 | **8.0×** |
+| Token Verification (service) | 0.058 | 0.044 | **1.3×** |
+| Key Generation (raw) | 108.333 | 0.049 | **2206×** |
+| Signature (raw) | 89.323 | 0.106 | **842×** |
+| Verification (raw) | 0.113 | 0.044 | **2.6×** |
+
+### Critério de reprodutibilidade
+
+> **CV < 5%** = Excelente — resultados altamente reprodutíveis
+> **CV 5–10%** = Aceitável — variação dentro do esperado para benchmarks de criptografia
+> **CV > 10%** = Investigar — pode indicar interferência externa (GC, thermal throttling, escalonamento de CPU)
+
+**Resultado geral:** 19 de 20 operações apresentam CV < 10%, com a maioria abaixo de 5%. A única exceção é `pqc_sign` (service layer) com CV = 12.4%, explicável pelo fato de operações sub-milissegundo serem mais sensíveis a outliers causados por GC pauses do Python. A **mediana** de `pqc_sign` é estável entre runs (0.182ms), confirmando que a variação está nos outliers (tail), não no regime permanente.
+
+### Gráficos de reprodutibilidade
+
+- `results/multi_run/inter_run_boxplot.png` — distribuição de latência por run (box plot)
+- `results/multi_run/inter_run_cv.png` — coeficiente de variação por operação (bar chart)
+- `results/multi_run/run_means_comparison.png` — médias por run lado a lado
+
+### Saída de dados
+
+- `results/runs/run_1/raw_samples.csv` — 2000 amostras da rodada 1
+- `results/runs/run_2/raw_samples.csv` — 2000 amostras da rodada 2
+- `results/runs/run_3/raw_samples.csv` — 2000 amostras da rodada 3
+- `results/multi_run/combined_samples.csv` — 6000 amostras concatenadas
+- `results/multi_run/inter_run_stats.csv` — estatísticas inter-run com CV%
+- `results/multi_run/summary_stats_all_runs.csv` — summary stats por run

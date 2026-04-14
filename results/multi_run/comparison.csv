@@ -1,0 +1,6 @@
+comparison,classical_op,classical_algorithm,classical_mean_ms,classical_median_ms,pqc_op,pqc_algorithm,pqc_mean_ms,pqc_median_ms,speedup_factor
+Token Signing,jwt_sign,RS256,1.6293,1.5332,pqc_sign,ML-DSA-44,0.2031,0.1823,8.02
+Token Verification,jwt_verify,RS256,0.0584,0.054,pqc_verify,ML-DSA-44,0.0442,0.0437,1.32
+Key Generation (raw),raw_rsa_keygen,RSA-2048,108.3329,97.2014,raw_mldsa_keygen,ML-DSA-44,0.0491,0.0472,2206.37
+Signature (raw),raw_rsa_sign,RSA-2048,89.3226,88.5667,raw_mldsa_sign,ML-DSA-44,0.1061,0.0895,841.87
+Verification (raw),raw_rsa_verify,RSA-2048,0.1131,0.1107,raw_mldsa_verify,ML-DSA-44,0.0441,0.0425,2.56
