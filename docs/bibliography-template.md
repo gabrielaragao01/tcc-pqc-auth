@@ -32,8 +32,12 @@
 - Tamanho de artefatos: chave pública 1312 B, chave privada 2528 B, assinatura 2420 B
 
 **Referências sugeridas:**
-- Ducas et al., "CRYSTALS-Dilithium: A Lattice-Based Digital Signature Scheme" (TCHES 2018)
-- Bos et al., "CRYSTALS - Kyber: a CCA-secure module-lattice-based KEM" (EuroS&P 2018)
+- Ducas, L., Kiltz, E., Lepoint, T., Lyubashevsky, V., Schwabe, P., Seiler, G., Stehlé, D. "CRYSTALS-Dilithium: A Lattice-Based Digital Signature Scheme." *IACR Transactions on Cryptographic Hardware and Embedded Systems*, 2018(1), pp. 238–268. DOI: 10.13154/tches.v2018.i1.238-268
+- Ducas, L., Kiltz, E., Lepoint, T., Lyubashevsky, V., Schwabe, P., Seiler, G., Stehlé, D. *CRYSTALS-Dilithium: Algorithm Specifications and Supporting Documentation (Version 3.1).* NIST PQC Round 3 Submission, February 2021. Disponível em: https://pq-crystals.org/dilithium/
+- National Institute of Standards and Technology. *FIPS 204: Module-Lattice-Based Digital Signature Standard.* U.S. Department of Commerce, August 2024. DOI: 10.6028/NIST.FIPS.204
+- Avanzi, R., Bos, J., Ducas, L., et al. *CRYSTALS-Kyber: Algorithm Specifications and Supporting Documentation (Version 3.02).* NIST PQC Round 3 Submission, 2021. Disponível em: https://pq-crystals.org/kyber/
+- Bos, J., Ducas, L., Kiltz, E., Lepoint, T., Lyubashevsky, V., Schanck, J. M., Schwabe, P., Seiler, G., Stehlé, D. "CRYSTALS — Kyber: A CCA-Secure Module-Lattice-Based KEM." *2018 IEEE European Symposium on Security and Privacy (EuroS&P)*, pp. 353–367. DOI: 10.1109/EuroSP.2018.00032
+- National Institute of Standards and Technology. *FIPS 203: Module-Lattice-Based Key-Encapsulation Mechanism Standard.* U.S. Department of Commerce, August 2024. DOI: 10.6028/NIST.FIPS.203
 
 ---
 
@@ -57,8 +61,9 @@
 - PQC-JWT: trabalhos acadêmicos sobre tokens pós-quânticos
 
 **Referências sugeridas:**
-- Paquin et al., "Benchmarking Post-Quantum Cryptography in TLS" (PQCrypto 2020)
-- Bindel et al., "Transitioning to a Quantum-Resistant Public Key Infrastructure" (PQCrypto 2017)
+- Sikeridis, D., Kampanakis, P., Devetsikiotis, M. "Post-Quantum Authentication in TLS 1.3: A Performance Study." *Network and Distributed System Security Symposium (NDSS)*, 2020. DOI: 10.14722/ndss.2020.24203 — **Referência principal para consistência de speedup cross-plataforma (ARM e x86); citar nesta afirmação especificamente.**
+- Paquin, C., Stebila, D., Tamvada, G. "Benchmarking Post-Quantum Cryptography in TLS." *Post-Quantum Cryptography (PQCrypto)*, 2020. DOI: 10.1007/978-3-030-44223-1_26
+- Bindel, N., Buchmann, J., Krämer, J. "Transitioning to a Quantum-Resistant Public Key Infrastructure." *Post-Quantum Cryptography (PQCrypto)*, 2017. DOI: 10.1007/978-3-319-59879-6_22
 
 ---
 
