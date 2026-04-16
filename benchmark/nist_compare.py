@@ -38,6 +38,13 @@ def ratio(our_ms: float, nist_ms: float) -> float:
 
 @dataclass(frozen=True)
 class NistEntry:
+    """Entrada de referência NIST com ciclos de clock por operação.
+
+    As propriedades sign_ms e verify_ms são polimórficas:
+      - Para Dilithium: sign_ms = Sign, verify_ms = Verify
+      - Para Kyber:     sign_ms = Encaps, verify_ms = Decaps
+    """
+
     name: str
     platform: str
     freq_ghz: float
