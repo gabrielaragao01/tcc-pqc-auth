@@ -384,3 +384,44 @@ Essa consistência cross-plataforma é corroborada pela literatura:
 - `results/multi_run/combined_samples.csv` — 6000 amostras concatenadas
 - `results/multi_run/inter_run_stats.csv` — estatísticas inter-run com CV%
 - `results/multi_run/summary_stats_all_runs.csv` — summary stats por run
+
+---
+
+## Fase 6 — Comparação com Referência NIST
+
+**Data:** 2026-04-16
+**Status:** Análise completa — documento dedicado em `docs/nist_comparison.md`
+
+> A comparação detalhada com os valores de referência das especificações NIST
+> (CRYSTALS-Dilithium v3.1 e CRYSTALS-Kyber v3.02) está em:
+> **[docs/nist_comparison.md](nist_comparison.md)**
+
+### Resumo executivo
+
+| Algoritmo | Operação | ARM64 Python (ms) | NIST ref C (ms) | vs ref | NIST AVX2 (ms) | vs AVX2 |
+|-----------|----------|-------------------|-----------------|--------|-----------------|---------|
+| ML-DSA-44 | Sign | 0.106 | 0.4158 | **0.25×** | 0.0997 | 1.06× |
+| ML-DSA-44 | Verify | 0.044 | 0.1259 | **0.35×** | 0.0455 | 0.97× |
+| ML-DSA-44 | KeyGen | 0.049 | 0.1157 | **0.42×** | 0.0477 | 1.03× |
+| Kyber512 | Encaps | 0.018 | 0.0443 | **0.41×** | 0.0129 | 1.39× |
+| Kyber512 | Decaps | 0.016 | 0.0538 | **0.30×** | 0.0099 | 1.62× |
+| Kyber512 | KeyGen | 0.018 | 0.0351 | **0.51×** | 0.0097 | 1.86× |
+
+> **Nota:** ratio < 1,0× = nosso ARM64 é **mais rápido** que a referência NIST.
+> NIST ref C = Intel Skylake @ 2.6 GHz (Dilithium) / Intel Haswell @ 3.492 GHz (Kyber), sem AVX2.
+> NIST AVX2 = mesma plataforma, implementação otimizada com SIMD 256-bit.
+
+### Achado principal
+
+Python/liboqs em Apple Silicon ARM64 executa ML-DSA-44 e Kyber512 **mais rápido do que
+a implementação C de referência** nos processadores x86_64 usados nas especificações NIST.
+Para ML-DSA-44, nosso ambiente Python atinge **paridade com a implementação AVX2 otimizada**
+(0.97–1.06×). Isso se deve à combinação de: (1) alto IPC do Apple Silicon; (2) otimizações
+ARM64 (NEON/AES-NI) incluídas no liboqs 0.15.0; (3) overhead CFFI < 5% para operações
+acima de 50 µs.
+
+### Validação metodológica
+
+O overhead Python/CFFI não invalida a comparação RSA-2048 vs ML-DSA-44: ambos os algoritmos
+sofrem o mesmo overhead por chamada (~1–5 µs), e o speedup de **842×** (raw sign) e **8×**
+(service layer) reflete a diferença real dos algoritmos criptográficos.
